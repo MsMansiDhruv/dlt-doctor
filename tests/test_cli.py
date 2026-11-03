@@ -76,3 +76,42 @@ def test_cli_compact() -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
+
+
+def test_cli_uc_migrate(tmp_path: Path) -> None:
+    test_file = tmp_path / "legacy.py"
+    test_file.write_text("df = spark.read.json('/mnt/raw/orders')", encoding="utf-8")
+
+    test_args = ["dlt-doctor", "uc-migrate", str(test_file)]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 1  # critical finding for dbfs mount
+
+
+def test_cli_cluster() -> None:
+    test_args = [
+        "dlt-doctor",
+        "cluster",
+        "--table",
+        "main.gold.orders",
+        "--cols",
+        "customer_id",
+        "order_date",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_vacuum() -> None:
+    test_args = [
+        "dlt-doctor",
+        "vacuum",
+        "--table",
+        "main.silver.orders",
+        "--retention",
+        "168",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0

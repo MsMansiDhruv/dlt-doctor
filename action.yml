@@ -1,0 +1,36 @@
+name: "dlt-doctor"
+description: "Static optimization engine and quality accelerator for Databricks DLT, Auto Loader, and PySpark"
+author: "Mansi Dhruv"
+
+inputs:
+  path:
+    description: "Path to Python or SQL file to analyze"
+    required: true
+    default: "src"
+  format:
+    description: "Output format: text, markdown, or html"
+    required: false
+    default: "text"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dlt-doctor
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install "${{ github.action_path }}"
+
+    - name: Run dlt-doctor analyze
+      shell: bash
+      run: |
+        dlt-doctor analyze "${{ inputs.path }}" --format "${{ inputs.format }}"
+
+branding:
+  icon: "activity"
+  color: "green"

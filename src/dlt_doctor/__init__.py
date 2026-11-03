@@ -12,6 +12,11 @@ from dlt_doctor.catalyst import (
     PlanDoctor,
 )
 from dlt_doctor.cdc import CdcDoctor, CdcMergeTemplate
+from dlt_doctor.cluster import (
+    ClusterDoctor,
+    ColumnProfile,
+    LiquidClusterRecommendation,
+)
 from dlt_doctor.compaction import CompactionDebtReport, CompactionDoctor
 from dlt_doctor.expectations import (
     ExpectationDoctor,
@@ -20,8 +25,19 @@ from dlt_doctor.expectations import (
 )
 from dlt_doctor.reconciler import BlastRadiusScope, RestatementDoctor
 from dlt_doctor.skew import SkewAnalysisResult, SkewDoctor
+from dlt_doctor.uc import (
+    UcDoctor,
+    UcFinding,
+    UcMigrationPlan,
+    UcMigrationSeverity,
+)
+from dlt_doctor.vacuum import (
+    VacuumDoctor,
+    VacuumSafetyLevel,
+    VacuumSafetyReport,
+)
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "PlanDoctor",
@@ -41,6 +57,16 @@ __all__ = [
     "CompactionDebtReport",
     "CdcDoctor",
     "CdcMergeTemplate",
+    "ClusterDoctor",
+    "ColumnProfile",
+    "LiquidClusterRecommendation",
+    "UcDoctor",
+    "UcFinding",
+    "UcMigrationPlan",
+    "UcMigrationSeverity",
+    "VacuumDoctor",
+    "VacuumSafetyLevel",
+    "VacuumSafetyReport",
     "AdvisorDoctor",
     "PipelineAuditReport",
 ]

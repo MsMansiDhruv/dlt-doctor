@@ -153,6 +153,42 @@ dlt-doctor cdc --table main.silver.customers --keys customer_id --event-time upd
 
 # Audit Delta table small-file fragmentation and generate OPTIMIZE commands
 dlt-doctor compact --table main.silver.events --avg-file-mb 8.5 --total-files 4200
+
+# Audit legacy DBFS mounts and two-tier Hive Metastore references for Unity Catalog
+dlt-doctor uc-migrate src/pipelines/orders.py --catalog prod_lakehouse --schema bronze
+
+# Recommend optimal Delta Liquid Clustering (CLUSTER BY) keys
+dlt-doctor cluster --table main.gold.fact_orders --cols customer_id order_date country_code
+
+# Evaluate Delta VACUUM retention safety against active streaming reader lag
+dlt-doctor vacuum --table main.silver.orders --retention 168 --readers 2 --cdf
+```
+
+### GitHub Actions CI Integration
+
+Add `dlt-doctor` to your repository's PR workflows to catch PySpark anti-patterns before merging:
+
+```yaml
+# .github/workflows/pyspark-audit.yml
+name: PySpark & DLT Quality Gate
+
+on:
+  pull_request:
+    paths:
+      - "**.py"
+      - "**.sql"
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit PySpark Code Quality
+        uses: MsMansiDhruv/dlt-doctor@main
+        with:
+          path: "src/pipelines"
+          format: "text"
 ```
 
 ---
@@ -356,6 +392,79 @@ print(templates.microbatch_dedup_code)
 print(templates.scd1_merge_sql)
 ```
 
+### 7. Unity Catalog Migration & DBFS Mount Auditor
+
+Audit legacy DBFS mounts and two-tier Hive Metastore references, generating Unity Catalog Volume paths and DDL:
+
+```python
+from dlt_doctor import UcDoctor
+
+doctor = UcDoctor()
+
+legacy_script = """
+df_orders = spark.read.json("/mnt/landing/raw_orders/2026")
+df_silver = spark.table("orders_silver")
+"""
+
+plan = doctor.analyze_source_code(legacy_script, target_catalog="prod_lakehouse", target_schema="bronze")
+
+for finding in plan.findings:
+    print(f"[{finding.severity.value}] Line {finding.line_number}: {finding.description}")
+    print(f"  Target: {finding.recommended_target}")
+
+# Print generated Unity Catalog Volume creation DDL
+for ddl in plan.generated_volume_ddl:
+    print(ddl)
+```
+
+### 8. Liquid Clustering (CLUSTER BY) Key Optimization
+
+Apply Databricks cardinality rules to select 1 to 4 optimal clustering keys:
+
+```python
+from dlt_doctor import ClusterDoctor, ColumnProfile
+
+doctor = ClusterDoctor()
+
+columns = [
+    ColumnProfile(name="customer_id", data_type="string", distinct_count=25000, filter_frequency_score=0.9),
+    ColumnProfile(name="order_date", data_type="date", distinct_count=1800, filter_frequency_score=0.95),
+    ColumnProfile(name="country_code", data_type="string", distinct_count=120, filter_frequency_score=0.7),
+    ColumnProfile(name="order_uuid", data_type="string", distinct_count=9_990_000, filter_frequency_score=0.1),
+]
+
+rec = doctor.advise_clustering("main.gold.fact_orders", columns, total_rows=10_000_000)
+
+print(f"Selected Cluster Keys: {', '.join(rec.recommended_keys)}")
+print(f"DDL: {rec.alter_cluster_ddl}")
+print(f"Optimize: {rec.optimize_ddl}")
+```
+
+### 9. Safe Delta VACUUM & Retention Guard
+
+Prevent streaming `FileNotFoundException` crashes before executing destructive table purges:
+
+```python
+from dlt_doctor import VacuumDoctor
+
+doctor = VacuumDoctor()
+
+report = doctor.evaluate_vacuum_safety(
+    table_name="main.silver.orders",
+    requested_retention_hours=24,
+    active_streaming_readers=2,
+    cdf_enabled=True,
+)
+
+print(f"Safety Grade: {report.safety_level.value}")
+for warning in report.warnings:
+    print(f"Warning: {warning}")
+
+print(f"Safe Retention: {report.safe_retention_hours} hours")
+print(f"Dry Run Command: {report.dry_run_sql}")
+print(f"Recommended SQL: {report.recommended_vacuum_sql}")
+```
+
 ---
 
 ## Benchmarks
@@ -387,13 +496,17 @@ Benchmarked against common PySpark anti-patterns on a 10M-record transactional d
 | **Join Skew & Stragglers** | Unmonitored executor crashes | Ratio detection, AQE configs, and salting templates |
 | **Small-File Debt** | Manual slow `OPTIMIZE` commands | Metadata audit, partition boundary pruning, auto-optimize flags |
 | **Streaming CDC Collisions** | Fatal multiple-match merge failure | Window row_number() micro-batch deduplication |
+| **Unity Catalog Migration** | Manual search across scripts for DBFS | Automated regex + AST scanner with Volume DDL generation |
+| **Liquid Clustering** | Guesswork choosing 1-4 clustering keys | Profile-driven cardinality, distinct count, and filter evaluation |
+| **Delta VACUUM Safety** | Fatal stream FileNotFoundException | Reader lag & CDF safety checks with pre-flight dry runs |
+| **CI/CD Quality Gate** | Manual code reviews | Reusable GitHub Action (`uses: MsMansiDhruv/dlt-doctor@main`) |
 | **Cluster Dependency** | Requires active cluster to inspect code | Runs statically in under 50ms locally or in-notebook |
 
 ---
 
 ## Test Suite & Verification
 
-The test suite runs 23 targeted unit tests across all diagnostic engines with zero external dependencies:
+The test suite runs 34 targeted unit tests across all diagnostic engines with zero external dependencies:
 
 ```bash
 pytest -v
@@ -415,6 +528,11 @@ tests/test_cli.py::test_cli_analyze_critical_udf PASSED
 tests/test_cli.py::test_cli_restate PASSED
 tests/test_cli.py::test_cli_cdc PASSED
 tests/test_cli.py::test_cli_compact PASSED
+tests/test_cli.py::test_cli_uc_migrate PASSED
+tests/test_cli.py::test_cli_cluster PASSED
+tests/test_cli.py::test_cli_vacuum PASSED
+tests/test_cluster.py::test_select_optimal_cluster_keys PASSED
+tests/test_cluster.py::test_reject_complex_types PASSED
 tests/test_compaction.py::test_compaction_severe_fragmentation PASSED
 tests/test_compaction.py::test_compaction_healthy_table PASSED
 tests/test_expectations.py::test_build_quarantine_routing PASSED
@@ -423,6 +541,12 @@ tests/test_reconciler.py::test_calculate_blast_radius_math PASSED
 tests/test_reconciler.py::test_advise_liquid_clustering PASSED
 tests/test_skew.py::test_skew_detection_severe PASSED
 tests/test_skew.py::test_skew_detection_healthy PASSED
+tests/test_uc.py::test_detect_dbfs_mount_paths PASSED
+tests/test_uc.py::test_detect_legacy_table_references PASSED
+tests/test_uc.py::test_clean_unity_catalog_code PASSED
+tests/test_vacuum.py::test_vacuum_safe_default PASSED
+tests/test_vacuum.py::test_vacuum_dangerous_low_retention_with_active_readers PASSED
+tests/test_vacuum.py::test_vacuum_cdf_retention_warning PASSED
 ```
 
 ---
