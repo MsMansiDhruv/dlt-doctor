@@ -1,0 +1,174 @@
+<svg viewBox="0 0 940 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0E1726" />
+      <stop offset="100%" stop-color="#070C14" />
+    </linearGradient>
+    <linearGradient id="tealGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2EE6A7" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+    <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF9B4A" />
+      <stop offset="100%" stop-color="#E85D04" />
+    </linearGradient>
+    <filter id="glowArch" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <rect width="100%" height="100%" rx="14" fill="url(#bg)" stroke="#1F2E45" stroke-width="1.5"/>
+
+  <!-- Title bar -->
+  <g transform="translate(32, 28)">
+    <text x="0" y="16" fill="#FFFFFF" font-size="16" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="700">dlt-doctor: Production Systems Architecture</text>
+    <text x="0" y="34" fill="#91A8A2" font-size="11" font-family="monospace">DATABRICKS RUNTIME 15+ · SPARK 3.5+ · DELTA LAKE · UNITY CATALOG</text>
+  </g>
+
+  <!-- 4 Architecture Columns / Stages -->
+
+  <!-- STAGE 1: Auto Loader Streaming -->
+  <g transform="translate(32, 80)">
+    <rect width="200" height="260" rx="10" fill="#14233A" stroke="#1F2E45" stroke-width="1"/>
+    <!-- Stage Header -->
+    <rect width="200" height="36" rx="10" fill="#182A45"/>
+    <text x="14" y="22" fill="#38BDF8" font-size="11" font-family="monospace" font-weight="700">01 // AUTO LOADER</text>
+
+    <!-- Component 1 -->
+    <g transform="translate(14, 52)">
+      <rect width="172" height="52" rx="6" fill="#0E1726" stroke="#1F2E45" stroke-width="1"/>
+      <text x="12" y="20" fill="#EAF4F0" font-size="11" font-weight="600" font-family="sans-serif">cloudFiles Discovery</text>
+      <text x="12" y="38" fill="#91A8A2" font-size="9.5" font-family="monospace">schemaLocation &amp; rescue</text>
+    </g>
+
+    <!-- Component 2 -->
+    <g transform="translate(14, 114)">
+      <rect width="172" height="58" rx="6" fill="#0E1726" stroke="#2EE6A7" stroke-width="1" stroke-dasharray="3 2"/>
+      <text x="12" y="20" fill="#2EE6A7" font-size="11" font-weight="600" font-family="sans-serif">Backpressure Guard</text>
+      <text x="12" y="36" fill="#91A8A2" font-size="9" font-family="sans-serif">Enforces maxFilesPerTrigger</text>
+      <text x="12" y="48" fill="#91A8A2" font-size="9" font-family="monospace">prevents driver OOM</text>
+    </g>
+
+    <!-- Component 3 -->
+    <g transform="translate(14, 182)">
+      <rect width="172" height="52" rx="6" fill="#0E1726" stroke="#1F2E45" stroke-width="1"/>
+      <text x="12" y="20" fill="#EAF4F0" font-size="11" font-weight="600" font-family="sans-serif">Telemetry Auditor</text>
+      <text x="12" y="38" fill="#FF9B4A" font-size="9.5" font-family="monospace">query.recentProgress</text>
+    </g>
+  </g>
+
+  <!-- Flow Arrow 1 -> 2 -->
+  <g transform="translate(242, 200)">
+    <line x1="0" y1="0" x2="16" y2="0" stroke="#38BDF8" stroke-width="2" stroke-dasharray="4 2">
+      <animate attributeName="stroke-dashoffset" from="12" to="0" dur="1s" repeatCount="indefinite"/>
+    </line>
+    <polygon points="16,-3 22,0 16,3" fill="#38BDF8"/>
+  </g>
+
+  <!-- STAGE 2: DLT Expectations (Dual Routing) -->
+  <g transform="translate(264, 80)">
+    <rect width="200" height="260" rx="10" fill="#14233A" stroke="#1F2E45" stroke-width="1"/>
+    <!-- Stage Header -->
+    <rect width="200" height="36" rx="10" fill="#182A45"/>
+    <text x="14" y="22" fill="#2EE6A7" font-size="11" font-family="monospace" font-weight="700">02 // DLT QUALITY</text>
+
+    <!-- Clean Route -->
+    <g transform="translate(14, 52)">
+      <rect width="172" height="84" rx="6" fill="#0E1726" stroke="#2EE6A7" stroke-width="1.2"/>
+      <circle cx="14" cy="18" r="4" fill="#2EE6A7" filter="url(#glowArch)"/>
+      <text x="26" y="22" fill="#2EE6A7" font-size="11" font-weight="700" font-family="sans-serif">Clean Stream</text>
+      <text x="12" y="42" fill="#B0C4DE" font-size="9.5">Passes business contracts</text>
+      <text x="12" y="58" fill="#91A8A2" font-size="9" font-family="monospace">@dlt.table(silver_orders)</text>
+      <text x="12" y="72" fill="#2EE6A7" font-size="9" font-family="monospace">filter(1 = 1 contract)</text>
+    </g>
+
+    <!-- Quarantine Route -->
+    <g transform="translate(14, 148)">
+      <rect width="172" height="86" rx="6" fill="#0E1726" stroke="#FF9B4A" stroke-width="1.2"/>
+      <circle cx="14" cy="18" r="4" fill="#FF9B4A" filter="url(#glowArch)"/>
+      <text x="26" y="22" fill="#FF9B4A" font-size="11" font-weight="700" font-family="sans-serif">Quarantine Stream</text>
+      <text x="12" y="42" fill="#B0C4DE" font-size="9.5">Zero silent record drops</text>
+      <text x="12" y="58" fill="#91A8A2" font-size="9" font-family="monospace">silver_orders_quarantine</text>
+      <text x="12" y="74" fill="#FF9B4A" font-size="9" font-family="monospace">_dlt_quarantined_at tags</text>
+    </g>
+  </g>
+
+  <!-- Flow Arrow 2 -> 3 -->
+  <g transform="translate(474, 200)">
+    <line x1="0" y1="0" x2="16" y2="0" stroke="#2EE6A7" stroke-width="2" stroke-dasharray="4 2">
+      <animate attributeName="stroke-dashoffset" from="12" to="0" dur="1s" repeatCount="indefinite"/>
+    </line>
+    <polygon points="16,-3 22,0 16,3" fill="#2EE6A7"/>
+  </g>
+
+  <!-- STAGE 3: Catalyst & AST Engine -->
+  <g transform="translate(496, 80)">
+    <rect width="200" height="260" rx="10" fill="#14233A" stroke="#1F2E45" stroke-width="1"/>
+    <!-- Stage Header -->
+    <rect width="200" height="36" rx="10" fill="#182A45"/>
+    <text x="14" y="22" fill="#B0C4DE" font-size="11" font-family="monospace" font-weight="700">03 // CATALYST AST</text>
+
+    <!-- Check 1: UDF -->
+    <g transform="translate(14, 48)">
+      <rect width="172" height="42" rx="5" fill="#0E1726" stroke="#1F2E45" stroke-width="1"/>
+      <text x="10" y="18" fill="#EF4444" font-size="10" font-weight="700" font-family="monospace">UDF Elimination</text>
+      <text x="10" y="32" fill="#91A8A2" font-size="8.5">Removes JVM-Python IPC socket</text>
+    </g>
+
+    <!-- Check 2: withColumn -->
+    <g transform="translate(14, 98)">
+      <rect width="172" height="42" rx="5" fill="#0E1726" stroke="#1F2E45" stroke-width="1"/>
+      <text x="10" y="18" fill="#FF9B4A" font-size="10" font-weight="700" font-family="monospace">Cascade Consolidation</text>
+      <text x="10" y="32" fill="#91A8A2" font-size="8.5">Replaces 8x withColumn with 1x</text>
+    </g>
+
+    <!-- Check 3: Shuffle & Coalesce -->
+    <g transform="translate(14, 148)">
+      <rect width="172" height="42" rx="5" fill="#0E1726" stroke="#1F2E45" stroke-width="1"/>
+      <text x="10" y="18" fill="#38BDF8" font-size="10" font-weight="700" font-family="monospace">Shuffle Avoidance</text>
+      <text x="10" y="32" fill="#91A8A2" font-size="8.5">coalesce(N) before table write</text>
+    </g>
+
+    <!-- Check 4: Cartesian -->
+    <g transform="translate(14, 198)">
+      <rect width="172" height="42" rx="5" fill="#0E1726" stroke="#1F2E45" stroke-width="1"/>
+      <text x="10" y="18" fill="#2EE6A7" font-size="10" font-weight="700" font-family="monospace">CrossJoin Interceptor</text>
+      <text x="10" y="32" fill="#91A8A2" font-size="8.5">Blocks un-keyed M*N products</text>
+    </g>
+  </g>
+
+  <!-- Flow Arrow 3 -> 4 -->
+  <g transform="translate(706, 200)">
+    <line x1="0" y1="0" x2="16" y2="0" stroke="#FF9B4A" stroke-width="2" stroke-dasharray="4 2">
+      <animate attributeName="stroke-dashoffset" from="12" to="0" dur="1s" repeatCount="indefinite"/>
+    </line>
+    <polygon points="16,-3 22,0 16,3" fill="#FF9B4A"/>
+  </g>
+
+  <!-- STAGE 4: Delta Reconciler -->
+  <g transform="translate(728, 80)">
+    <rect width="180" height="260" rx="10" fill="#14233A" stroke="#1F2E45" stroke-width="1"/>
+    <!-- Stage Header -->
+    <rect width="180" height="36" rx="10" fill="#182A45"/>
+    <text x="14" y="22" fill="#FF9B4A" font-size="11" font-family="monospace" font-weight="700">04 // RECONCILER</text>
+
+    <!-- Blast Radius -->
+    <g transform="translate(12, 52)">
+      <rect width="156" height="84" rx="6" fill="#0E1726" stroke="#FF9B4A" stroke-width="1.2"/>
+      <text x="10" y="20" fill="#FF9B4A" font-size="11" font-weight="700">Blast-Radius Math</text>
+      <text x="10" y="38" fill="#EAF4F0" font-size="10" font-family="monospace">[t_late, t_late+W-1]</text>
+      <text x="10" y="56" fill="#91A8A2" font-size="9">Bounds affected partitions</text>
+      <text x="10" y="72" fill="#2EE6A7" font-size="9" font-weight="700">98.1% Scan Bypass</text>
+    </g>
+
+    <!-- Delta MERGE -->
+    <g transform="translate(12, 148)">
+      <rect width="156" height="86" rx="6" fill="#0E1726" stroke="#2EE6A7" stroke-width="1.2"/>
+      <text x="10" y="20" fill="#2EE6A7" font-size="11" font-weight="700">Targeted MERGE</text>
+      <text x="10" y="38" fill="#B0C4DE" font-size="9">In-place restatement</text>
+      <text x="10" y="54" fill="#91A8A2" font-size="9" font-family="monospace">ON partition BETWEEN</text>
+      <text x="10" y="70" fill="#38BDF8" font-size="9" font-family="monospace">Liquid CLUSTER BY</text>
+    </g>
+  </g>
+</svg>

@@ -1,22 +1,25 @@
 <div align="center">
 
-# dlt-doctor
+<img src="./assets/dlt-doctor-mascot.svg" alt="dlt-doctor banner and visual identity" width="100%" />
 
-### Production Optimization Engine and Quality Accelerator for Databricks DLT, Auto Loader, and PySpark
+<p align="center">
+  <strong>Production Optimization Engine and Quality Accelerator for Databricks DLT, Auto Loader, and PySpark</strong>
+</p>
 
 [![PyPI](https://img.shields.io/badge/PyPI-dlt--doctor-3776AB?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/dlt-doctor/)
 [![Runtime](https://img.shields.io/badge/Runtime-Databricks%20%7C%20Spark%203.5+-FF9B4A?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org/)
 [![Storage](https://img.shields.io/badge/Storage-Delta%20Lake%20%26%20CDF-2EE6A7?style=for-the-badge&logo=delta&logoColor=white)](https://delta.io/)
 [![Governance](https://img.shields.io/badge/Governance-Unity%20Catalog-0E1726?style=for-the-badge&logo=databricks&logoColor=2EE6A7)](https://www.databricks.com/product/unity-catalog)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-16%2F16%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor)
+[![CI Tests](https://img.shields.io/badge/CI-Passing%20(3.10%20%7C%203.11%20%7C%203.12)-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
 
 <p align="center">
   <a href="#operational-impact">Operational Impact</a> •
+  <a href="#how-dlt-doctor-accelerates-data-engineering">How It Accelerates DE</a> •
   <a href="#architecture">Architecture</a> •
+  <a href="#terminal-audit-preview">CLI Audit</a> •
   <a href="#quickstart">Quickstart</a> •
-  <a href="#core-capabilities">Capabilities</a> •
-  <a href="#databricks-notebook-integration">Notebook Usage</a> •
+  <a href="#production-walkthrough">Notebook Usage</a> •
   <a href="#benchmarks">Benchmarks</a>
 </p>
 
@@ -26,47 +29,66 @@
 
 ### Operational Impact
 
-| 98.1% Scan Reduction | Zero Silent Data Drops | 15x UDF Speedup | Sub-Second Plan Analysis |
+| 98.1% Scan Reduction | Zero Silent Data Drops | 15.4x UDF Acceleration | Sub-50ms AST Analysis |
 | :---: | :---: | :---: | :---: |
-| Bounded $[t_{\text{late}}, t_{\text{late}} + W - 1]$ partition pruning | Dual-routing quarantine replaces `expect_or_drop` | AST rewrite replaces Python socket IPC with native expressions | Audits PySpark code and Catalyst plans in under 50ms |
+| Bounded $[t_{\text{late}}, t_{\text{late}} + W - 1]$ partition pruning | Dual-routing quarantine replaces `expect_or_drop` | Replaces Python socket IPC with native Spark expressions | Audits PySpark code and Catalyst plans without cluster cost |
+
+---
+
+## How dlt-doctor Accelerates Data Engineering
+
+In enterprise Databricks environments, data engineers lose days to four systemic gaps:
+
+```
++-------------------------------------------------------------------------------------------------------+
+|                                    THE 4 DATA ENGINEERING GAPS                                        |
++-------------------------------------------------------------------------------------------------------+
+| 1. Catalyst Plan Bloat & UDF Latency  -->  Linear planning delays, 15x CPU loss on Python IPC sockets |
+| 2. DLT Silent Data Drops              -->  expect_or_drop deletes compliance records without audit   |
+| 3. Auto Loader Driver OOM Spikes      -->  Unbounded file bursts crash streams without maxFiles bounds|
+| 4. Late-Arriving Data Restatements    -->  Corrupted 7d/30d rolling windows force full-table reloads  |
++-------------------------------------------------------------------------------------------------------+
+```
+
+### Gap 1: PySpark Catalyst Compilation Bloat & Python UDFs
+- **The Gap**: Chaining multiple `.withColumn()` calls creates a deep recursive tree of `Project` nodes in Catalyst. For complex pipelines (10+ columns), Catalyst spends more time compiling the execution plan than Spark spends executing the tasks. Furthermore, standard `@udf` forces row-by-row socket serialization between JVM workers and Python daemons, disabling Whole-Stage CodeGen.
+- **How dlt-doctor Accelerates You**: Statically parses your code via AST before execution. It consolidates chained `.withColumn()` calls into a single `df.withColumns({...})` and points directly to native replacement expressions (`F.when`, `F.coalesce`, or vectorized `@pandas_udf`).
+
+### Gap 2: Silent Data Loss vs Pipeline Crashes in DLT
+- **The Gap**: Native Delta Live Tables gives you two painful choices: `expect_or_drop` (which silently deletes malformed records and breaks financial auditability) or `expect_or_fail` (which crashes your nightly pipeline at 2 AM for a single malformed row).
+- **How dlt-doctor Accelerates You**: Generates resilient dual-routing DLT tables (`@expect_or_quarantine`). Valid records advance downstream to Gold without disruption, while invalid rows divert into a quarantined Delta table stamped with violated rule names and audit timestamps.
+
+### Gap 3: Auto Loader Ingestion Spikes & Memory Leaks
+- **The Gap**: When an upstream system drops 50,000 files into a cloud storage volume at midnight, an Auto Loader stream without `maxFilesPerTrigger` attempts to process the entire backlog in a single micro-batch, causing driver OOM.
+- **How dlt-doctor Accelerates You**: Validates option maps pre-flight, enforces safety thresholds, and evaluates `query.recentProgress` to flag stream backpressure before micro-batches accumulate.
+
+### Gap 4: Late-Data Rolling-Window Invalidation
+- **The Gap**: Gold analytical tables frequently calculate 7-day or 30-day rolling metrics. When an upstream partition lands 3 days late, historical rolling aggregates become distorted. Engineers typically run expensive full-table reloads across months of historical data.
+- **How dlt-doctor Accelerates You**: Uses bounded partition math $[t_{\text{late}}, t_{\text{late}} + W - 1]$ to calculate the exact affected date range and emits a partition-pruned Delta `MERGE` that restates only the affected days, skipping 358 unaffected days (98.1% DBU scan bypass).
 
 ---
 
 ## Architecture
 
-```
-                                 dlt-doctor Engine
-                                         │
-        ┌────────────────────────────────┼────────────────────────────────┐
-        │                                │                                │
-        ▼                                ▼                                ▼
-[ PySpark & Catalyst ]          [ Auto Loader Doctor ]          [ DLT Expectations ]
-  - Python UDF IPC serialization  - cloudFiles schema rescue      - Dual routing quarantine
-  - .withColumn() cascades        - Micro-batch backpressure      - Zero silent data drops
-  - Cartesian crossJoin flags     - maxFilesPerTrigger bounds     - Failure metadata tags
-        │                                │                                │
-        └────────────────────────────────┼────────────────────────────────┘
-                                         │
-                                         ▼
-                       [ Delta Restatement Engine ]
-                         - Surgical blast-radius math
-                         - Partition-pruned MERGE SQL
-                         - Liquid clustering advisory
-```
+<div align="center">
+
+<img src="./assets/dlt-doctor-architecture.svg" alt="dlt-doctor end-to-end architecture" width="100%" />
+
+*End-to-end operational flow: Auto Loader streaming discovery, dual-route DLT quality quarantine, Catalyst AST optimization, and surgical Delta Lake MERGE restatement.*
+
+</div>
 
 ---
 
-## Why dlt-doctor?
+## Terminal Audit Preview
 
-Most production pipeline failures and DBU budget overruns in Databricks stem from predictable code anti-patterns:
+<div align="center">
 
-1. **Python UDF serialization**: Standard `@udf` decorators force row-by-row serialization across JVM-to-Python sockets, disabling Catalyst Whole-Stage CodeGen and vectorization.
-2. **Deep `.withColumn()` cascades**: Chaining multiple `.withColumn()` calls creates deep projection trees in Catalyst, causing exponential plan compilation latency.
-3. **Silent data loss in DLT**: Pipelines using `expect_or_drop` silently drop invalid records without audit trails, while `expect_or_fail` crashes pipelines and halts downstream delivery.
-4. **Auto Loader stream backpressure**: Streams configured without `maxFilesPerTrigger` risk driver OOM on sudden backlog spikes.
-5. **Full-table historical reloads**: Late-arriving partitions in rolling-window tables trigger expensive full-table recomputations across months of historical data.
+<img src="./assets/dlt-doctor-terminal.svg" alt="dlt-doctor terminal CLI audit screenshot" width="100%" />
 
-`dlt-doctor` diagnoses these bottlenecks, provides automated DLT quarantine wrappers, and generates surgical Delta Lake restatements.
+*Terminal scorecard output from running `dlt-doctor analyze src/pipelines/orders_silver.py`.*
+
+</div>
 
 ---
 
@@ -78,61 +100,26 @@ Most production pipeline failures and DBU budget overruns in Databricks stem fro
 pip install dlt-doctor
 ```
 
-### 1. Analyze a PySpark Pipeline from CLI
+### Run Instant Pipeline Audit
 
 ```bash
+# Analyze a PySpark pipeline script
 dlt-doctor analyze src/pipelines/orders_silver.py
-```
 
-**Terminal Output:**
-```
-======================================================================
- DLT-Doctor Audit: orders_silver.py
- Health Score: 45/100 | Est. DBU Savings: ~65%
-======================================================================
+# Export as Markdown for GitHub PR comments
+dlt-doctor analyze src/pipelines/orders_silver.py --format markdown
 
-[CRITICAL] Python UDF serialization overhead (PYSPARK-001)
-Line: 18
-Impact: Function 'normalize_text' uses standard Python @udf. Forces row-by-row
-        JVM-to-Python socket serialization, disabling Whole-Stage CodeGen.
-Fix:    Rewrite using native PySpark built-in functions (F.when, F.coalesce),
-        Spark SQL expressions, or an Apache Arrow vectorized @pandas_udf.
-
-[HIGH] Deep withColumn cascade (PYSPARK-002)
-Line: 34
-Impact: Detected 6 chained .withColumn() calls. Causes linear plan compilation
-        degradation and potential StackOverflowError in Catalyst.
-Fix:    Consolidate into a single df.withColumns({...}) call (Spark 3.3+).
-
-[MEDIUM] Repartition triggers full shuffle (PYSPARK-004)
-Line: 52
-Impact: .repartition(4) triggers a full round-robin shuffle across network.
-Fix:    If reducing partition count before write, use .coalesce(4).
-----------------------------------------------------------------------
-```
-
-### 2. Generate Surgical Delta MERGE Restatement
-
-```bash
-dlt-doctor restate --table main.gold.fact_orders --late-date 2026-10-25 --window 7
-```
-
-**Output:**
-```sql
-MERGE INTO main.gold.fact_orders AS target
-USING source_recalculated AS source
-ON target.order_date = source.order_date
-AND target.id = source.id
-AND target.order_date BETWEEN '2026-10-25' AND '2026-10-31'
-WHEN MATCHED THEN UPDATE SET *
-WHEN NOT MATCHED THEN INSERT *;
+# Export self-contained HTML for Databricks notebook cell rendering
+dlt-doctor analyze src/pipelines/orders_silver.py --format html
 ```
 
 ---
 
-## Databricks Notebook Integration
+## Production Walkthrough
 
-### Audit PySpark Code In-Memory
+### 1. In-Notebook PySpark Code & Plan Diagnostics
+
+Run directly inside a Databricks notebook to audit pipeline code or runtime Catalyst execution plans:
 
 ```python
 from dlt_doctor import PlanDoctor, AdvisorDoctor
@@ -140,17 +127,32 @@ from dlt_doctor import PlanDoctor, AdvisorDoctor
 doctor = PlanDoctor()
 advisor = AdvisorDoctor()
 
-# Inspect any PySpark script or notebook cell
-findings = doctor.analyze_source_code(pipeline_code)
-report = advisor.compile_report("silver_orders_pipeline", findings)
+pipeline_code = """
+@udf(returnType=StringType())
+def clean_email(email):
+    return email.strip().lower() if email else None
 
-# Render rich interactive dashboard directly in Databricks notebook
+df_clean = (
+    df
+    .withColumn("c1", F.col("a"))
+    .withColumn("c2", F.col("b"))
+    .withColumn("c3", F.col("c"))
+    .withColumn("c4", F.col("d"))
+    .withColumn("clean_email", clean_email(F.col("raw_email")))
+    .repartition(4)
+)
+"""
+
+findings = doctor.analyze_source_code(pipeline_code)
+report = advisor.compile_report("customer_orders_etl", findings)
+
+# Render interactive health scorecard inside Databricks notebook
 displayHTML(advisor.to_databricks_html(report))
 ```
 
-### Resilient DLT Dual-Routing Quarantine
+### 2. Resilient DLT Quarantine Routing (Zero Record Loss)
 
-Replace `expect_or_drop` with zero-data-loss quarantine routing:
+Replace dangerous `expect_or_drop` with automated dual routing:
 
 ```python
 import dlt
@@ -165,7 +167,7 @@ rules = [
 
 plan = doctor.build_quarantine_routing("silver_orders", rules)
 
-# Clean DLT Table: Only validated records advance downstream
+# Clean DLT Table: Valid records advance to Gold
 @dlt.table(
     name=plan.target_clean_table,
     comment="Clean orders passing all business expectation contracts."
@@ -176,40 +178,51 @@ def silver_orders():
         .filter(plan.valid_filter_sql)
     )
 
-# Quarantine DLT Table: Zero silent drops; full audit trail for remediation
+# Quarantine DLT Table: Invalid rows preserved for investigation
 @dlt.table(
     name=plan.target_quarantine_table,
-    comment="Quarantined records failing expectations with failure timestamp."
+    comment="Quarantined records failing expectations with audit timestamp."
 )
 def silver_orders_quarantine():
     return (
         dlt.read_stream("bronze_orders")
         .filter(plan.invalid_filter_sql)
+        .withColumn("_dlt_quarantined_at", F.current_timestamp())
     )
 ```
 
-### Auto Loader Configuration Guardrails
+### 3. Surgical Delta Lake MERGE Restatement
+
+When a delayed partition lands, restate historical rolling windows without reloading the entire table:
 
 ```python
-from dlt_doctor import AutoLoaderConfig, AutoLoaderDoctor
+from dlt_doctor import RestatementDoctor
 
-config = AutoLoaderConfig(
-    format="json",
-    source_path="/Volumes/main/bronze/raw_events",
-    schema_location="/Volumes/main/checkpoints/events_schema",
-    schema_evolution_mode="rescue",
-    max_files_per_trigger=1000,
+reconciler = RestatementDoctor()
+scope = reconciler.calculate_blast_radius(
+    target_table="main.gold.fact_orders",
+    late_date_iso="2026-10-25",
+    window_size_days=7,
+    partition_col="order_date",
+    match_key="order_id",
 )
 
-# Returns validated options dictionary for Spark streaming
-spark_options = config.to_spark_options()
+print(f"Affected Partition Range: {scope.blast_radius_start} to {scope.blast_radius_end}")
+print(f"Partition Filter: {scope.partition_pruning_clause}")
 
-df_stream = (
-    spark.readStream
-    .format("cloudFiles")
-    .options(**spark_options)
-    .load(config.source_path)
-)
+# Execute targeted Delta MERGE restatement
+spark.sql(scope.delta_merge_sql)
+```
+
+Generated SQL:
+```sql
+MERGE INTO main.gold.fact_orders AS target
+USING source_recalculated AS source
+ON target.order_date = source.order_date
+AND target.order_id = source.order_id
+AND target.order_date BETWEEN '2026-10-25' AND '2026-10-31'
+WHEN MATCHED THEN UPDATE SET *
+WHEN NOT MATCHED THEN INSERT *;
 ```
 
 ---
@@ -218,13 +231,13 @@ df_stream = (
 
 Benchmarked against common PySpark anti-patterns on a 10M-record transactional dataset (Databricks Runtime 15.4 LTS, 4x worker nodes):
 
-| Anti-Pattern | Unoptimized Approach | dlt-doctor Refactored Approach | Measured Speedup / Savings |
+| Bottleneck Pattern | Default Pipeline | dlt-doctor Refactored | Measured Improvement |
 | :--- | :--- | :--- | :---: |
 | **Row Transformation** | Python `@udf` | Native `F.when` / Arrow `@pandas_udf` | **15.4x faster** (IPC eliminated) |
 | **Projection Tree** | 8 chained `.withColumn()` | Single `df.withColumns({...})` | **4.2x faster Catalyst planning** |
 | **Pre-Write File Sizing** | `.repartition(8)` | `.coalesce(8)` | **100% shuffle elimination** |
 | **Late Data Backfill** | Full 365-day table reload | Targeted 7-day partition-pruned `MERGE` | **98.1% scan reduction** |
-| **Data Quality Gate** | `expect_or_drop` (silent loss) | Dual-route quarantine | **0 records lost** (100% auditability) |
+| **Quality Enforcement** | `expect_or_drop` | Dual-route quarantine stream | **0 records lost** (100% auditability) |
 
 ---
 
@@ -232,7 +245,7 @@ Benchmarked against common PySpark anti-patterns on a 10M-record transactional d
 
 | Feature | Default Databricks / PySpark | With dlt-doctor |
 | :--- | :--- | :--- |
-| **UDF Inspection** | Runtime task latency spikes | Static AST flag with native replacement suggestion |
+| **UDF Inspection** | Discovered during slow cluster execution | Static AST flag with native replacement suggestion |
 | **withColumn Cascades** | Silent Catalyst compilation degradation | Consolidates into single projection node |
 | **DLT Violations** | Silent drop or 2 AM pipeline crash | Resilient quarantine stream with metadata |
 | **Auto Loader Guards** | Unbounded micro-batch memory spikes | Enforced `maxFilesPerTrigger` and schema rescue |
@@ -241,9 +254,9 @@ Benchmarked against common PySpark anti-patterns on a 10M-record transactional d
 
 ---
 
-## Verification & Test Suite
+## Test Suite & Verification
 
-The test suite contains 16 comprehensive unit tests:
+The test suite runs 16 targeted unit tests across all diagnostic engines:
 
 ```bash
 pytest -v
