@@ -46,10 +46,12 @@ Meanwhile, enterprise SaaS observability tools cost \$50,000 to \$150,000 annual
 
 <div align="center">
 
-<video src="./assets/dlt-doctor-showcase.mp4" width="100%" controls="controls"></video>
+<a href="https://github.com/MsMansiDhruv/dlt-doctor/blob/main/assets/dlt-doctor-showcase.mp4">
+  <img src="./assets/dlt-doctor-showcase.gif" alt="dlt-doctor product showcase animated preview" width="100%" />
+</a>
 
 <p align="center">
-  <sub>15-Second Overview: Eliminate silent drops, accelerate PySpark execution, and avoid the $100k SaaS tax.</sub>
+  <sub>15-Second Showcase: Eliminate silent drops, accelerate PySpark execution, and avoid the $100k SaaS tax. Click to view full 1080p video.</sub>
 </p>
 
 </div>
