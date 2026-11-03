@@ -9,9 +9,14 @@ from pathlib import Path
 from dlt_doctor.advisor import AdvisorDoctor
 from dlt_doctor.catalyst import DiagnosticSeverity, PlanDoctor
 from dlt_doctor.cdc import CdcDoctor
+from dlt_doctor.checkpoint import CheckpointDoctor
 from dlt_doctor.cluster import ClusterDoctor, ColumnProfile
 from dlt_doctor.compaction import CompactionDoctor
+from dlt_doctor.cost import CostDoctor
+from dlt_doctor.history import HistoryDoctor
 from dlt_doctor.reconciler import RestatementDoctor
+from dlt_doctor.schema import SchemaDoctor
+from dlt_doctor.spill import SpillDoctor
 from dlt_doctor.uc import UcDoctor
 from dlt_doctor.vacuum import VacuumDoctor
 
@@ -104,6 +109,77 @@ def main() -> int:
     )
     vacuum_parser.add_argument(
         "--cdf", action="store_true", help="Whether Change Data Feed (CDF) is enabled"
+    )
+
+    # schema command
+    schema_parser = subparsers.add_parser(
+        "schema", help="Compare incoming batch schema and generate Delta migration DDL"
+    )
+    schema_parser.add_argument("--table", required=True, help="Target Delta table")
+    schema_parser.add_argument(
+        "--incoming-cols",
+        nargs="+",
+        required=True,
+        help="Incoming column definitions (e.g. name:type)",
+    )
+
+    # cost command
+    cost_parser = subparsers.add_parser(
+        "cost", help="Forecast Databricks DBU burn and cluster sizing"
+    )
+    cost_parser.add_argument(
+        "--files-per-hour", type=int, required=True, help="Landing files per hour"
+    )
+    cost_parser.add_argument(
+        "--avg-file-mb", type=float, default=10.0, help="Average file size in MB"
+    )
+    cost_parser.add_argument(
+        "--batch", action="store_true", help="Triggered batch workload mode"
+    )
+    cost_parser.add_argument(
+        "--hours", type=float, default=24.0, help="Active daily hours"
+    )
+    cost_parser.add_argument(
+        "--joins", type=int, default=1, help="Number of shuffle joins"
+    )
+
+    # spill command
+    spill_parser = subparsers.add_parser(
+        "spill",
+        help="Calculate optimal spark.sql.shuffle.partitions to prevent disk spill",
+    )
+    spill_parser.add_argument(
+        "--dataset-gb", type=float, required=True, help="Dataset size in GB"
+    )
+    spill_parser.add_argument(
+        "--cores", type=int, default=16, help="Total cluster worker cores"
+    )
+
+    # history command
+    history_parser = subparsers.add_parser(
+        "history",
+        help="Evaluate Delta transaction log velocity and checkpoint interval",
+    )
+    history_parser.add_argument("--table", required=True, help="Target Delta table")
+    history_parser.add_argument(
+        "--commits-per-hour", type=int, required=True, help="Commits written per hour"
+    )
+
+    # checkpoint command
+    checkpoint_parser = subparsers.add_parser(
+        "checkpoint", help="Audit Structured Streaming checkpoint directory health"
+    )
+    checkpoint_parser.add_argument(
+        "--dir", required=True, help="Path to checkpoint directory"
+    )
+    checkpoint_parser.add_argument(
+        "--stateful", action="store_true", help="Stateful operators present"
+    )
+    checkpoint_parser.add_argument(
+        "--schema-changed", action="store_true", help="Source schema changed"
+    )
+    checkpoint_parser.add_argument(
+        "--keys-changed", action="store_true", help="Aggregation keys changed"
     )
 
     args = parser.parse_args()
@@ -274,6 +350,134 @@ def main() -> int:
         print(f"\nGuidance:\n{report.guidance}")
         print("-" * 70)
         return 1 if report.safety_level.value == "DANGEROUS" else 0
+
+    elif args.command == "schema":
+        doctor = SchemaDoctor()
+        # Parse incoming columns format col:type
+        inc_schema = {}
+        for item in args.incoming_cols:
+            if ":" in item:
+                col, dtype = item.split(":", 1)
+                inc_schema[col.strip()] = dtype.strip()
+            else:
+                inc_schema[item.strip()] = "string"
+
+        # Baseline demo target schema
+        existing_schema = {"id": "bigint", "created_at": "timestamp"}
+        report = doctor.compare_schemas(args.table, existing_schema, inc_schema)
+
+        print("=" * 70)
+        print(f" Delta Schema Evolution Audit: {args.table}")
+        print(f" Has Breaking Mutations: {report.has_breaking_changes}")
+        print("=" * 70)
+        for chg in report.changes:
+            print(f"\n[{chg.severity.value}] {chg.description}")
+            print(f"Action: {chg.migration_action}")
+
+        if report.generated_ddl:
+            print("\nGenerated DDL Statements:")
+            for ddl in report.generated_ddl:
+                print(f"  {ddl}")
+        print("-" * 70)
+        return 1 if report.has_breaking_changes else 0
+
+    elif args.command == "cost":
+        doctor = CostDoctor()
+        forecast = doctor.forecast_pipeline_cost(
+            files_per_hour=args.files_per_hour,
+            avg_file_mb=args.avg_file_mb,
+            is_continuous_streaming=not args.batch,
+            active_hours_per_day=args.hours,
+            shuffle_join_count=args.joins,
+        )
+        print("=" * 70)
+        print(" Databricks DBU Cost & Sizing Forecast")
+        print(
+            f" Workload: {forecast.workload_type} | Daily Volume: {forecast.daily_ingestion_gb} GB"
+        )
+        print("=" * 70)
+        print(f"Recommended Compute Tier: {forecast.recommended_tier}")
+        print(
+            f"Classic DLT:    ~{forecast.classic_dlt_dbus_per_hour} DBU/hr (~{forecast.classic_dlt_monthly_dbus:,.0f} DBU/mo)"
+        )
+        print(
+            f"Serverless DLT: ~{forecast.serverless_dlt_dbus_per_hour} DBU/hr (~{forecast.serverless_dlt_monthly_dbus:,.0f} DBU/mo)"
+        )
+        print("\nCluster Configuration:")
+        print(f"  Driver:  {forecast.recommended_cluster.driver_node_type}")
+        print(
+            f"  Workers: {forecast.recommended_cluster.min_workers} to {forecast.recommended_cluster.max_workers}x {forecast.recommended_cluster.worker_node_type}"
+        )
+        print("\nRecommendations:")
+        for r in forecast.cost_saving_recommendations:
+            print(f"  * {r}")
+        print("-" * 70)
+        return 0
+
+    elif args.command == "spill":
+        doctor = SpillDoctor()
+        advice = doctor.calculate_optimal_partitions(
+            dataset_size_gb=args.dataset_gb,
+            total_cluster_cores=args.cores,
+        )
+        print("=" * 70)
+        print(" PySpark Shuffle Spill & Partition Optimization")
+        print(
+            f" Dataset: {advice.dataset_size_gb} GB | Cluster Cores: {advice.total_cluster_cores}"
+        )
+        print("=" * 70)
+        print(f"Default spark.sql.shuffle.partitions: {advice.default_partitions}")
+        print(f"Optimal spark.sql.shuffle.partitions: {advice.optimal_partitions}")
+        print(f"Severe Disk Spill Risk: {advice.has_spill_risk}")
+        print(f"\nRationale:\n{advice.rationale}")
+        print("\nRecommended Spark Configurations:")
+        for k, v in advice.recommended_configs.items():
+            print(f"  spark.conf.set('{k}', '{v}')")
+        print("-" * 70)
+        return 0
+
+    elif args.command == "history":
+        doctor = HistoryDoctor()
+        report = doctor.evaluate_commit_velocity(
+            table_name=args.table,
+            commits_per_hour=args.commits_per_hour,
+        )
+        print("=" * 70)
+        print(f" Delta Transaction Log Audit: {args.table}")
+        print(
+            f" Commits/Hr: {report.commits_per_hour} | Monthly Log Files: ~{report.estimated_monthly_log_files:,}"
+        )
+        print("=" * 70)
+        print(f"Log Bloat Risk: {report.has_log_bloat_risk}")
+        if report.warnings:
+            for w in report.warnings:
+                print(f"[WARNING] {w}")
+        print(f"\nRecommended TBLPROPERTIES:\n{report.recommended_tblproperties_ddl}")
+        print(f"\nGuidance:\n{report.guidance}")
+        print("-" * 70)
+        return 0
+
+    elif args.command == "checkpoint":
+        doctor = CheckpointDoctor()
+        report = doctor.audit_checkpoint_state(
+            checkpoint_dir=args.dir,
+            has_stateful_operators=args.stateful,
+            source_schema_changed=args.schema_changed,
+            aggregation_keys_changed=args.keys_changed,
+        )
+        print("=" * 70)
+        print(f" Structured Streaming Checkpoint Health: {args.dir}")
+        print(f" Integrity Status: {report.status.value}")
+        print("=" * 70)
+        if report.issues:
+            for issue in report.issues:
+                print(f"[ISSUE] {issue}")
+        print(f"\nRecovery Guidance:\n{report.recovery_guidance}")
+        print("\nMigration Procedure:")
+        for step in report.safe_migration_procedure:
+            print(f"  {step}")
+        print("-" * 70)
+        return 1 if report.status.value == "INCOMPATIBLE" else 0
 
     return 0
 

@@ -115,3 +115,72 @@ def test_cli_vacuum() -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
+
+
+def test_cli_schema() -> None:
+    test_args = [
+        "dlt-doctor",
+        "schema",
+        "--table",
+        "main.silver.orders",
+        "--incoming-cols",
+        "id:bigint",
+        "email:string",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_cost() -> None:
+    test_args = [
+        "dlt-doctor",
+        "cost",
+        "--files-per-hour",
+        "1000",
+        "--avg-file-mb",
+        "5.0",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_spill() -> None:
+    test_args = [
+        "dlt-doctor",
+        "spill",
+        "--dataset-gb",
+        "50.0",
+        "--cores",
+        "16",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_history() -> None:
+    test_args = [
+        "dlt-doctor",
+        "history",
+        "--table",
+        "main.silver.orders",
+        "--commits-per-hour",
+        "60",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_checkpoint() -> None:
+    test_args = [
+        "dlt-doctor",
+        "checkpoint",
+        "--dir",
+        "/Volumes/checkpoints/orders",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0

@@ -12,19 +12,37 @@ from dlt_doctor.catalyst import (
     PlanDoctor,
 )
 from dlt_doctor.cdc import CdcDoctor, CdcMergeTemplate
+from dlt_doctor.checkpoint import (
+    CheckpointDoctor,
+    CheckpointHealthReport,
+    CheckpointIntegrityStatus,
+)
 from dlt_doctor.cluster import (
     ClusterDoctor,
     ColumnProfile,
     LiquidClusterRecommendation,
 )
 from dlt_doctor.compaction import CompactionDebtReport, CompactionDoctor
+from dlt_doctor.cost import (
+    ClusterSizingProfile,
+    CostDoctor,
+    DbuCostForecast,
+)
 from dlt_doctor.expectations import (
     ExpectationDoctor,
     ExpectationRule,
     QuarantineRoutingPlan,
 )
+from dlt_doctor.history import HistoryDoctor, LogVelocityReport
 from dlt_doctor.reconciler import BlastRadiusScope, RestatementDoctor
+from dlt_doctor.schema import (
+    SchemaChange,
+    SchemaDoctor,
+    SchemaDriftSeverity,
+    SchemaEvolutionReport,
+)
 from dlt_doctor.skew import SkewAnalysisResult, SkewDoctor
+from dlt_doctor.spill import ShuffleTuningAdvice, SpillDoctor
 from dlt_doctor.uc import (
     UcDoctor,
     UcFinding,
@@ -37,7 +55,7 @@ from dlt_doctor.vacuum import (
     VacuumSafetyReport,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "PlanDoctor",
@@ -67,6 +85,20 @@ __all__ = [
     "VacuumDoctor",
     "VacuumSafetyLevel",
     "VacuumSafetyReport",
+    "SchemaDoctor",
+    "SchemaEvolutionReport",
+    "SchemaChange",
+    "SchemaDriftSeverity",
+    "CostDoctor",
+    "DbuCostForecast",
+    "ClusterSizingProfile",
+    "SpillDoctor",
+    "ShuffleTuningAdvice",
+    "HistoryDoctor",
+    "LogVelocityReport",
+    "CheckpointDoctor",
+    "CheckpointHealthReport",
+    "CheckpointIntegrityStatus",
     "AdvisorDoctor",
     "PipelineAuditReport",
 ]

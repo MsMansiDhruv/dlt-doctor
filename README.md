@@ -162,6 +162,21 @@ dlt-doctor cluster --table main.gold.fact_orders --cols customer_id order_date c
 
 # Evaluate Delta VACUUM retention safety against active streaming reader lag
 dlt-doctor vacuum --table main.silver.orders --retention 168 --readers 2 --cdf
+
+# Detect pre-flight schema drift and generate safe ALTER TABLE ADD COLUMNS DDL
+dlt-doctor schema --table main.silver.orders --incoming-cols id:bigint email:string phone:string
+
+# Forecast Databricks DBU burn and cluster sizing (Serverless vs Classic DLT)
+dlt-doctor cost --files-per-hour 25000 --avg-file-mb 12 --joins 2
+
+# Calculate dynamic spark.sql.shuffle.partitions to prevent executor disk spills
+dlt-doctor spill --dataset-gb 350 --cores 32
+
+# Audit transaction log commit velocity and checkpoint intervals
+dlt-doctor history --table main.silver.orders --commits-per-hour 360
+
+# Audit Structured Streaming checkpoint integrity and state compatibility
+dlt-doctor checkpoint --dir /Volumes/main/bronze/_checkpoints/orders --stateful
 ```
 
 ### GitHub Actions CI Integration
@@ -465,6 +480,111 @@ print(f"Dry Run Command: {report.dry_run_sql}")
 print(f"Recommended SQL: {report.recommended_vacuum_sql}")
 ```
 
+### 10. Schema Drift & Safe Evolution Guard
+
+Detect schema mutations before writing and auto-generate safe `ALTER TABLE ADD COLUMNS` DDL:
+
+```python
+from dlt_doctor import SchemaDoctor
+
+doctor = SchemaDoctor()
+
+existing_schema = {"id": "bigint", "created_at": "timestamp"}
+incoming_schema = {"id": "bigint", "created_at": "timestamp", "email": "string", "loyalty_tier": "string"}
+
+report = doctor.compare_schemas("main.silver.customers", existing_schema, incoming_schema)
+
+print(f"Has Breaking Mutations: {report.has_breaking_changes}")
+for change in report.changes:
+    print(f"[{change.severity.value}] {change.description}")
+
+# Print generated evolution DDL
+for ddl in report.generated_ddl:
+    print(ddl)
+```
+
+### 11. Databricks DBU Cost Forecaster & Sizing
+
+Forecast monthly DBU expenditure comparing Serverless DLT vs Classic Compute:
+
+```python
+from dlt_doctor import CostDoctor
+
+doctor = CostDoctor()
+
+forecast = doctor.forecast_pipeline_cost(
+    files_per_hour=25000,
+    avg_file_mb=12.0,
+    is_continuous_streaming=True,
+    shuffle_join_count=2,
+)
+
+print(f"Daily Ingestion: {forecast.daily_ingestion_gb} GB")
+print(f"Recommended Compute Tier: {forecast.recommended_tier}")
+print(f"Classic DLT:    ~{forecast.classic_dlt_monthly_dbus:,.0f} DBU/mo")
+print(f"Serverless DLT: ~{forecast.serverless_dlt_monthly_dbus:,.0f} DBU/mo")
+```
+
+### 12. Dynamic Shuffle Spill Minimizer
+
+Calculate dynamic `spark.sql.shuffle.partitions` to prevent multi-gigabyte disk spills:
+
+```python
+from dlt_doctor import SpillDoctor
+
+doctor = SpillDoctor()
+
+advice = doctor.calculate_optimal_partitions(dataset_size_gb=350.0, total_cluster_cores=32)
+
+print(f"Optimal Partitions: {advice.optimal_partitions} (replacing default 200)")
+print(f"Spill Risk under Default: {advice.has_spill_risk}")
+
+for conf, val in advice.recommended_configs.items():
+    print(f"spark.conf.set('{conf}', '{val}')")
+```
+
+### 13. Delta Transaction Log Velocity & Checkpointing
+
+Audit commit velocity and tune `delta.checkpointInterval` for high-frequency streaming:
+
+```python
+from dlt_doctor import HistoryDoctor
+
+doctor = HistoryDoctor()
+
+report = doctor.evaluate_commit_velocity(
+    table_name="main.silver.orders",
+    commits_per_hour=360,  # 10s micro-batch
+)
+
+print(f"Log Bloat Risk: {report.has_log_bloat_risk}")
+print(f"Recommended Checkpoint Interval: {report.recommended_checkpoint_interval}")
+print(report.recommended_tblproperties_ddl)
+```
+
+### 14. Structured Streaming Checkpoint Integrity
+
+Detect breaking stateful operator schema mutations before launching stream:
+
+```python
+from dlt_doctor import CheckpointDoctor
+
+doctor = CheckpointDoctor()
+
+report = doctor.audit_checkpoint_state(
+    checkpoint_dir="/Volumes/main/bronze/_checkpoints/orders",
+    has_stateful_operators=True,
+    aggregation_keys_changed=True,
+)
+
+print(f"Integrity Status: {report.status.value}")
+for issue in report.issues:
+    print(f"Issue: {issue}")
+
+for step in report.safe_migration_procedure:
+    print(step)
+```
+
 ---
 
 ## Benchmarks
@@ -500,13 +620,18 @@ Benchmarked against common PySpark anti-patterns on a 10M-record transactional d
 | **Liquid Clustering** | Guesswork choosing 1-4 clustering keys | Profile-driven cardinality, distinct count, and filter evaluation |
 | **Delta VACUUM Safety** | Fatal stream FileNotFoundException | Reader lag & CDF safety checks with pre-flight dry runs |
 | **CI/CD Quality Gate** | Manual code reviews | Reusable GitHub Action (`uses: MsMansiDhruv/dlt-doctor@main`) |
+| **Schema Drift Guard** | Corrupted rows routed to _rescued_data | Pre-flight classification with auto-generated ALTER TABLE DDL |
+| **Cost Forecasting** | Opaque monthly cloud bills | Workload DBU modeling comparing Serverless vs Classic compute |
+| **Shuffle Spills** | Hardcoded default 200 partitions | Dynamic partition sizing formula eliminating multi-GB disk spill |
+| **Transaction Log Health** | Unmonitored multi-second replay lag | Commit velocity audit tuning delta.checkpointInterval |
+| **Checkpoint Recovery** | Fatal IllegalStateException crashes | Incompatible state schema detection with migration guidance |
 | **Cluster Dependency** | Requires active cluster to inspect code | Runs statically in under 50ms locally or in-notebook |
 
 ---
 
 ## Test Suite & Verification
 
-The test suite runs 34 targeted unit tests across all diagnostic engines with zero external dependencies:
+The test suite runs 51 targeted unit tests across all diagnostic engines with zero external dependencies:
 
 ```bash
 pytest -v
@@ -523,6 +648,9 @@ tests/test_catalyst.py::test_detect_repartition_before_write PASSED
 tests/test_catalyst.py::test_detect_cross_join PASSED
 tests/test_catalyst.py::test_analyze_plan_string_cartesian_and_udf PASSED
 tests/test_cdc.py::test_generate_cdc_templates PASSED
+tests/test_checkpoint.py::test_checkpoint_healthy PASSED
+tests/test_checkpoint.py::test_checkpoint_uncommitted_batch PASSED
+tests/test_checkpoint.py::test_checkpoint_incompatible_state_keys PASSED
 tests/test_cli.py::test_cli_analyze_clean_file PASSED
 tests/test_cli.py::test_cli_analyze_critical_udf PASSED
 tests/test_cli.py::test_cli_restate PASSED
@@ -531,16 +659,30 @@ tests/test_cli.py::test_cli_compact PASSED
 tests/test_cli.py::test_cli_uc_migrate PASSED
 tests/test_cli.py::test_cli_cluster PASSED
 tests/test_cli.py::test_cli_vacuum PASSED
+tests/test_cli.py::test_cli_schema PASSED
+tests/test_cli.py::test_cli_cost PASSED
+tests/test_cli.py::test_cli_spill PASSED
+tests/test_cli.py::test_cli_history PASSED
+tests/test_cli.py::test_cli_checkpoint PASSED
 tests/test_cluster.py::test_select_optimal_cluster_keys PASSED
 tests/test_cluster.py::test_reject_complex_types PASSED
 tests/test_compaction.py::test_compaction_severe_fragmentation PASSED
 tests/test_compaction.py::test_compaction_healthy_table PASSED
+tests/test_cost.py::test_forecast_continuous_streaming_cost PASSED
+tests/test_cost.py::test_forecast_batch_cost PASSED
 tests/test_expectations.py::test_build_quarantine_routing PASSED
 tests/test_expectations.py::test_generate_dlt_decorator_code PASSED
+tests/test_history.py::test_history_normal_commit_velocity PASSED
+tests/test_history.py::test_history_high_streaming_commit_velocity PASSED
 tests/test_reconciler.py::test_calculate_blast_radius_math PASSED
 tests/test_reconciler.py::test_advise_liquid_clustering PASSED
+tests/test_schema.py::test_schema_safe_additions PASSED
+tests/test_schema.py::test_schema_safe_widening PASSED
+tests/test_schema.py::test_schema_breaking_mutation PASSED
 tests/test_skew.py::test_skew_detection_severe PASSED
 tests/test_skew.py::test_skew_detection_healthy PASSED
+tests/test_spill.py::test_spill_small_dataset PASSED
+tests/test_spill.py::test_spill_large_dataset_risk PASSED
 tests/test_uc.py::test_detect_dbfs_mount_paths PASSED
 tests/test_uc.py::test_detect_legacy_table_references PASSED
 tests/test_uc.py::test_clean_unity_catalog_code PASSED
