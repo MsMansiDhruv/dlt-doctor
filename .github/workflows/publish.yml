@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,7 +27,19 @@ jobs:
       - name: Build package distributions
         run: python -m build
 
-      - name: Publish package distributions to PyPI
+      - name: Publish package distributions via API Token
+        if: env.HAS_TOKEN == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+        env:
+          HAS_TOKEN: ${{ secrets.PYPI_API_TOKEN != '' }}
+
+      - name: Publish package distributions via Trusted Publishing (OIDC)
+        if: env.HAS_TOKEN != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+        env:
+          HAS_TOKEN: ${{ secrets.PYPI_API_TOKEN != '' }}
