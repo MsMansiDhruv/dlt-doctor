@@ -50,3 +50,29 @@ def test_cli_restate() -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
+
+
+def test_cli_cdc() -> None:
+    test_args = [
+        "dlt-doctor",
+        "cdc",
+        "--table",
+        "main.silver.orders",
+        "--keys",
+        "order_id",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_compact() -> None:
+    test_args = [
+        "dlt-doctor",
+        "compact",
+        "--table",
+        "main.gold.orders",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0

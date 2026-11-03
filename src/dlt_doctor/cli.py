@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dlt_doctor.advisor import AdvisorDoctor
 from dlt_doctor.catalyst import DiagnosticSeverity, PlanDoctor
+from dlt_doctor.cdc import CdcDoctor
+from dlt_doctor.compaction import CompactionDoctor
 from dlt_doctor.reconciler import RestatementDoctor
 
 
@@ -43,6 +45,24 @@ def main() -> int:
     restate_parser.add_argument(
         "--window", type=int, default=7, help="Rolling window size in days"
     )
+
+    # cdc command
+    cdc_parser = subparsers.add_parser(
+        "cdc", help="Generate streaming CDC deduplication and MERGE templates"
+    )
+    cdc_parser.add_argument("--table", required=True, help="Target Delta table")
+    cdc_parser.add_argument(
+        "--keys", required=True, nargs="+", help="Primary key column(s)"
+    )
+    cdc_parser.add_argument(
+        "--event-time", default="updated_at", help="Event timestamp column"
+    )
+
+    # compact command
+    compact_parser = subparsers.add_parser(
+        "compact", help="Generate Delta table compaction and auto-optimize properties"
+    )
+    compact_parser.add_argument("--table", required=True, help="Target Delta table")
 
     args = parser.parse_args()
 
@@ -103,6 +123,36 @@ def main() -> int:
         print("=" * 70)
         print("\nSurgical Delta MERGE SQL:\n")
         print(scope.delta_merge_sql)
+        print("-" * 70)
+        return 0
+
+    elif args.command == "cdc":
+        cdc = CdcDoctor()
+        tmpl = cdc.generate_cdc_templates(
+            target_table=args.table,
+            primary_keys=args.keys,
+            event_time_col=args.event_time,
+        )
+        print("=" * 70)
+        print(f" Delta CDC Stream Deduplication: {args.table}")
+        print("=" * 70)
+        print("\nPySpark In-Batch Deduplication:\n")
+        print(tmpl.microbatch_dedup_code)
+        print("\nSCD Type 1 MERGE SQL:\n")
+        print(tmpl.scd1_merge_sql)
+        print("-" * 70)
+        return 0
+
+    elif args.command == "compact":
+        doctor = CompactionDoctor()
+        report = doctor.analyze_file_distribution(args.table, [])
+        print("=" * 70)
+        print(f" Delta Compaction Advisory: {args.table}")
+        print("=" * 70)
+        print(f"\nTargeted Optimize SQL:\n{report.recommended_optimize_sql}\n")
+        print(
+            f"Auto-Optimize Table Properties:\n{report.recommended_tblproperties_sql}"
+        )
         print("-" * 70)
         return 0
 

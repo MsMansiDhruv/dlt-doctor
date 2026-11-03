@@ -6,15 +6,22 @@ from dlt_doctor.autoloader import (
     AutoLoaderDoctor,
     StreamHealthSummary,
 )
-from dlt_doctor.catalyst import DiagnosticFinding, DiagnosticSeverity, PlanDoctor
+from dlt_doctor.catalyst import (
+    DiagnosticFinding,
+    DiagnosticSeverity,
+    PlanDoctor,
+)
+from dlt_doctor.cdc import CdcDoctor, CdcMergeTemplate
+from dlt_doctor.compaction import CompactionDebtReport, CompactionDoctor
 from dlt_doctor.expectations import (
     ExpectationDoctor,
     ExpectationRule,
     QuarantineRoutingPlan,
 )
 from dlt_doctor.reconciler import BlastRadiusScope, RestatementDoctor
+from dlt_doctor.skew import SkewAnalysisResult, SkewDoctor
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "PlanDoctor",
@@ -28,6 +35,12 @@ __all__ = [
     "QuarantineRoutingPlan",
     "RestatementDoctor",
     "BlastRadiusScope",
+    "SkewDoctor",
+    "SkewAnalysisResult",
+    "CompactionDoctor",
+    "CompactionDebtReport",
+    "CdcDoctor",
+    "CdcMergeTemplate",
     "AdvisorDoctor",
     "PipelineAuditReport",
 ]
