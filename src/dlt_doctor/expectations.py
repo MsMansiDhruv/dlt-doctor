@@ -19,6 +19,13 @@ def _safe_identifier(name: str) -> str:
     return cleaned or "pipeline_table"
 
 
+def _escape_table_name(table_name: str) -> str:
+    """Safely escape catalog, schema, and table components with backticks for Unity Catalog."""
+    parts = table_name.strip().split(".")
+    escaped = [f"`{p.strip('`')}`" for p in parts]
+    return ".".join(escaped)
+
+
 @dataclass
 class ExpectationRule:
     """A business data quality expectation for DLT / Lakeflow tables."""
@@ -87,19 +94,29 @@ class ExpectationDoctor:
         table_name: str,
         rules: list[ExpectationRule],
     ) -> QuarantineRoutingPlan:
-        """Construct NULL-safe dual-routing filters separating clean data from quarantined records."""
-        if not rules:
+        """Construct NULL-safe dual-routing filters separating clean data from quarantined records.
+
+        Runtime Compatibility Note:
+        The generated `failed_rules_expr_sql` uses `array_compact(...)`, which requires
+        Apache Spark 3.4.0+ or Databricks Runtime (DBR) 13.0+. For older runtimes (DBR <= 12.2),
+        replace with `filter(array(...), x -> x IS NOT NULL)`.
+        """
+        # Honor action_on_failure: only rules with action_on_failure in {'quarantine', 'drop'} are routed to quarantine.
+        # Rules with action_on_failure == 'warn' log metrics but do not drop or quarantine records.
+        quarantine_rules = [r for r in rules if r.action_on_failure in {"quarantine", "drop"}]
+
+        if not quarantine_rules:
             return QuarantineRoutingPlan(
                 target_clean_table=table_name,
                 target_quarantine_table=f"{table_name}_quarantine",
                 valid_filter_sql="1 = 1",
                 invalid_filter_sql="1 = 0",
                 failed_rules_expr_sql="array()",
-                rules=[],
+                rules=rules,
             )
 
-        # All rules must pass for clean stream, wrapped in coalesce((<cond>), false) for NULL safety
-        valid_conditions = [f"coalesce(({r.condition_sql}), false)" for r in rules]
+        # All quarantine rules must pass for clean stream, wrapped in coalesce((<cond>), false) for NULL safety
+        valid_conditions = [f"coalesce(({r.condition_sql}), false)" for r in quarantine_rules]
         valid_filter = " AND ".join(valid_conditions)
 
         # Quarantine stream is the strict complement: NOT (valid_filter)
@@ -107,7 +124,7 @@ class ExpectationDoctor:
 
         # Compute array of failed rule names (NULL condition evaluation counts as failure)
         rule_case_exprs: list[str] = []
-        for r in rules:
+        for r in quarantine_rules:
             escaped_name = r.rule_name.replace("'", "''")
             rule_case_exprs.append(
                 f"CASE WHEN NOT (coalesce(({r.condition_sql}), false)) THEN '{escaped_name}' ELSE NULL END"
@@ -130,18 +147,33 @@ class ExpectationDoctor:
         source_table: str,
         flavor: str = "dp",
     ) -> str:
-        """Generate single-pass Lakeflow or DLT pipeline definitions with quarantine routing."""
+        """Generate single-pass Lakeflow or DLT pipeline definitions with quarantine routing.
+
+        Runtime Compatibility Note:
+        Requires Apache Spark 3.4.0+ / Databricks Runtime (DBR) 13.0+ for `array_compact`.
+
+        API Note on `pyspark.pipelines` (dp):
+        In Databricks Lakeflow Declarative Pipelines (`from pyspark import pipelines as dp`),
+        `dp.read_stream` does not exist. Stream ingestion uses `spark.readStream.table(...)`.
+        """
         clean_func = _safe_identifier(routing_plan.target_clean_table)
         quarantine_func = _safe_identifier(routing_plan.target_quarantine_table)
         staging_view_name = f"{routing_plan.target_clean_table}_staged"
         staging_func = f"{clean_func}_staged"
 
+        escaped_src = _escape_table_name(source_table)
+        escaped_staging = _escape_table_name(staging_view_name)
+
         if flavor == "dp":
             import_line = "from pyspark import pipelines as dp\nfrom pyspark.sql import functions as F"
             pkg = "dp"
+            read_src = f"spark.readStream.table('{escaped_src}')"
+            read_staging = f"spark.readStream.table('{escaped_staging}')"
         elif flavor == "dlt":
             import_line = "import dlt\nfrom pyspark.sql import functions as F"
             pkg = "dlt"
+            read_src = f"dlt.read_stream('{escaped_src}')"
+            read_staging = f"dlt.read_stream('{escaped_staging}')"
         else:
             raise ValueError(f"Unknown pipeline flavor '{flavor}'. Choose 'dp' or 'dlt'.")
 
@@ -159,7 +191,7 @@ class ExpectationDoctor:
             ")",
             f"def {staging_func}():",
             "    return (",
-            f"        {pkg}.read_stream('{source_table}')",
+            f"        {read_src}",
             f'        .withColumn("_failed_rules", F.expr("{escaped_expr}"))',
             '        .withColumn("_quarantined_at", F.current_timestamp())',
             "    )",
@@ -171,7 +203,7 @@ class ExpectationDoctor:
             ")",
             f"def {clean_func}():",
             "    return (",
-            f"        {pkg}.read_stream('{staging_view_name}')",
+            f"        {read_staging}",
             '        .filter(F.size(F.col("_failed_rules")) == 0)',
             '        .drop("_failed_rules", "_quarantined_at")',
             "    )",
@@ -183,7 +215,7 @@ class ExpectationDoctor:
             ")",
             f"def {quarantine_func}():",
             "    return (",
-            f"        {pkg}.read_stream('{staging_view_name}')",
+            f"        {read_staging}",
             '        .filter(F.size(F.col("_failed_rules")) > 0)',
             "    )",
         ]

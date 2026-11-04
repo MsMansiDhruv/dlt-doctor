@@ -119,6 +119,43 @@ def test_generate_pipeline_code_compiles_ast() -> None:
     assert "@dlt.table(" in dlt_code
 
 
+def test_dp_flavor_uses_spark_readstream_table_not_dp_read_stream() -> None:
+    """dp.read_stream does not exist in pyspark.pipelines; dp flavor must use spark.readStream.table."""
+    doctor = ExpectationDoctor()
+    rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
+    plan = doctor.build_quarantine_routing("silver_orders", rules)
+    code = doctor.generate_pipeline_code(plan, source_table="bronze_orders", flavor="dp")
+
+    assert "dp.read_stream" not in code, "dp.read_stream does not exist in pyspark.pipelines"
+    assert "spark.readStream.table(" in code
+
+
+def test_honors_action_on_failure_for_quarantine_routing() -> None:
+    """Quarantine routing must only route rules with action_on_failure in {'quarantine', 'drop'}, ignoring 'warn'."""
+    doctor = ExpectationDoctor()
+    rules = [
+        ExpectationRule("quarantine_rule", "amount > 0", action_on_failure="quarantine"),
+        ExpectationRule("warn_rule", "qty > 0", action_on_failure="warn"),
+    ]
+    plan = doctor.build_quarantine_routing("silver_orders", rules)
+
+    assert "amount > 0" in plan.valid_filter_sql
+    assert "quarantine_rule" in plan.failed_rules_expr_sql
+    # Warning rule should not filter or route to quarantine
+    assert "qty > 0" not in plan.valid_filter_sql
+    assert "warn_rule" not in plan.failed_rules_expr_sql
+
+
+def test_escapes_table_names_in_generated_code() -> None:
+    """Generated code must escape table names with backticks for Unity Catalog compatibility."""
+    doctor = ExpectationDoctor()
+    rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
+    plan = doctor.build_quarantine_routing("main.silver.orders", rules)
+    code = doctor.generate_pipeline_code(plan, source_table="main.bronze.orders", flavor="dp")
+
+    assert "`main`.`bronze`.`orders`" in code or "`main.bronze.orders`" in code
+
+
 @pytest.mark.integration
 def test_pyspark_integration_quarantine_partition() -> None:
     """Verify NULL-safe partition property using a local PySpark session if available."""
