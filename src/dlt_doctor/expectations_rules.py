@@ -12,6 +12,47 @@ from sqlglot.optimizer.simplify import simplify
 from dlt_doctor.catalyst import DiagnosticFinding, DiagnosticSeverity
 from dlt_doctor.config import DoctorConfig
 
+NONDETERMINISTIC_FUNCS = {
+    "current_timestamp",
+    "now",
+    "current_date",
+    "today",
+    "rand",
+    "randn",
+    "random",
+    "uuid",
+    "monotonically_increasing_id",
+    "spark_partition_id",
+}
+
+
+def _find_nondeterministic_function(cond_sql: str) -> str | None:
+    try:
+        parsed = sqlglot.parse_one(cond_sql, read="spark")
+    except sqlglot.errors.SqlglotError:
+        return None
+
+    for node in parsed.walk():
+        if isinstance(
+            node,
+            (
+                sqlglot.exp.CurrentTimestamp,
+                sqlglot.exp.CurrentDate,
+                sqlglot.exp.Rand,
+                sqlglot.exp.Uuid,
+            ),
+        ):
+            return node.key.lower()
+        if isinstance(node, (sqlglot.exp.Func, sqlglot.exp.Anonymous)):
+            fname = (node.name or node.sql_name() or "").lower()
+            if fname in NONDETERMINISTIC_FUNCS:
+                return fname
+        if isinstance(node, sqlglot.exp.Column):
+            cname = (node.name or "").lower()
+            if cname in {"current_timestamp", "current_date"}:
+                return cname
+    return None
+
 
 class ExpectationAstVisitor(ast.NodeVisitor):
     """Audits PySpark / Lakeflow AST for expectation anti-patterns."""
@@ -72,29 +113,39 @@ class ExpectationAstVisitor(ast.NodeVisitor):
             dec_name = self._get_decorator_name(dec)
             lineno = getattr(dec, "lineno", node.lineno)
 
-            if dec_name == "expect_or_drop":
+            if dec_name in {"expect", "expect_or_drop", "expect_or_fail"}:
                 if isinstance(dec, ast.Call):
                     rule_name = "expectation"
                     cond_sql = ""
-                    if len(dec.args) >= 2 and isinstance(dec.args[0], ast.Constant) and isinstance(dec.args[1], ast.Constant):
-                        rule_name = str(dec.args[0].value)
-                        cond_sql = str(dec.args[1].value)
-                        expectation_conditions.append((rule_name, cond_sql))
-                    elif len(dec.args) == 1 and isinstance(dec.args[0], ast.Name):
-                        # Dynamic argument to expect_or_drop
-                        self._emit_dd003(node, dec.args[0].id, lineno)
+                    if len(dec.args) >= 2:
+                        rule_arg = dec.args[0]
+                        cond_arg = dec.args[1]
+                        rule_name = str(rule_arg.value) if isinstance(rule_arg, ast.Constant) else "expectation"
+                        if isinstance(cond_arg, ast.Constant) and isinstance(cond_arg.value, str):
+                            cond_sql = cond_arg.value
+                            expectation_conditions.append((rule_name, cond_sql))
+                            nd_fn = _find_nondeterministic_function(cond_sql)
+                            if nd_fn:
+                                self._emit_dd004(node, nd_fn, cond_sql, lineno)
+                        else:
+                            var_repr = getattr(cond_arg, "id", None) or ast.unparse(cond_arg)
+                            self._emit_dd003(node, var_repr, lineno)
+                    elif len(dec.args) == 1:
+                        arg = dec.args[0]
+                        var_repr = getattr(arg, "id", None) or ast.unparse(arg)
+                        self._emit_dd003(node, var_repr, lineno)
 
-                    self._emit_dd001(node, table_name, is_regulated, rule_name, lineno)
+                    if dec_name == "expect_or_drop":
+                        self._emit_dd001(node, table_name, is_regulated, rule_name if len(dec.args) >= 2 else "expect_or_drop", lineno)
 
             elif (
-                dec_name == "expect_all_or_drop"
+                dec_name in {"expect_all", "expect_all_or_drop", "expect_all_or_fail"}
                 and isinstance(dec, ast.Call)
                 and dec.args
             ):
                 arg = dec.args[0]
-                resolved_dict: dict[str, str] | None = None
+                resolved_dict: dict[str, str] = {}
                 if isinstance(arg, ast.Dict):
-                    resolved_dict = {}
                     for k, v in zip(arg.keys, arg.values, strict=False):
                         if (
                             isinstance(k, ast.Constant)
@@ -103,17 +154,23 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                             and isinstance(v.value, str)
                         ):
                             resolved_dict[k.value] = v.value
+                        else:
+                            var_repr = getattr(v, "id", None) or ast.unparse(v)
+                            self._emit_dd003(node, var_repr, lineno)
                 elif isinstance(arg, ast.Name) and arg.id in self.module_dicts:
                     resolved_dict = self.module_dicts[arg.id]
                 else:
                     var_name = getattr(arg, "id", "dynamic_expression")
                     self._emit_dd003(node, var_name, lineno)
 
-                if resolved_dict:
-                    for r_name, c_sql in resolved_dict.items():
-                        expectation_conditions.append((r_name, c_sql))
+                for r_name, c_sql in resolved_dict.items():
+                    expectation_conditions.append((r_name, c_sql))
+                    nd_fn = _find_nondeterministic_function(c_sql)
+                    if nd_fn:
+                        self._emit_dd004(node, nd_fn, c_sql, lineno)
 
-                self._emit_dd001(node, table_name, is_regulated, "expect_all_or_drop", lineno)
+                if dec_name == "expect_all_or_drop":
+                    self._emit_dd001(node, table_name, is_regulated, "expect_all_or_drop", lineno)
 
         if expectation_conditions:
             self.all_expectation_conditions.extend(expectation_conditions)
@@ -146,7 +203,10 @@ class ExpectationAstVisitor(ast.NodeVisitor):
 
     def _has_comment_in_scope(self, node: ast.FunctionDef, comment: str) -> bool:
         """Check if preceding lines or function body contains a specific comment."""
-        start_line = max(0, node.lineno - 4)
+        first_line = node.lineno
+        if node.decorator_list:
+            first_line = min(getattr(d, "lineno", node.lineno) for d in node.decorator_list)
+        start_line = max(0, first_line - 4)
         end_line = min(len(self.source_lines), getattr(node, "end_lineno", node.lineno) or node.lineno)
         return any(comment in self.source_lines[i] for i in range(start_line, end_line))
 
@@ -174,12 +234,34 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                     "this causes irrecoverable data loss."
                 ),
                 recommendation=(
-                    "Refactor into a single-pass dual-stream quarantine pattern using 'dlt-doctor heal' "
+                    "Refactor into a single-pass dual-stream quarantine pattern "
                     "to preserve failing records in a dedicated quarantine table."
                 ),
                 line_number=lineno,
                 estimated_dbu_impact="Medium (Data Loss Risk)",
                 code_snippet=f"@{rule_name}",
+            )
+        )
+
+    def _emit_dd004(self, node: ast.FunctionDef, fn_name: str, cond_sql: str, lineno: int) -> None:
+        """Emit DD004 for non-deterministic functions in expectations."""
+        sev = self.config.get_severity("DD004", DiagnosticSeverity.HIGH)
+        self.findings.append(
+            DiagnosticFinding(
+                rule_id="DD004",
+                severity=sev,
+                title="Non-deterministic function in expectation condition",
+                impact_summary=(
+                    f"Expectation condition '{cond_sql}' in function '{node.name}' uses "
+                    f"non-deterministic function '{fn_name}'. Validation outcomes can shift "
+                    "across retries and streaming micro-batches, leading to inconsistent pipelines."
+                ),
+                recommendation=(
+                    f"Replace '{fn_name}' with a deterministic column value or watermarked timestamp."
+                ),
+                line_number=lineno,
+                estimated_dbu_impact="High (Data Quality Risk)",
+                code_snippet=cond_sql,
             )
         )
 

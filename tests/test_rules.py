@@ -257,3 +257,96 @@ def clean_tbl():
     assert len(dd003_dynamic) == 1
     assert dd003_dynamic[0].severity == DiagnosticSeverity.INFO
     assert "cannot be statically resolved" in dd003_dynamic[0].impact_summary
+
+
+def test_dd003_partially_dynamic_dict_and_2arg_variable() -> None:
+    """DD003 must be emitted for partially dynamic dicts and variable conditions in 2-arg expect_or_drop."""
+    # 2-arg expect_or_drop with variable condition
+    code_2arg = """
+import dlt
+
+cond = "amount > 0"
+
+@dlt.table
+@dlt.expect_or_drop("valid_amt", cond)
+def orders():
+    return dlt.read_stream("raw")
+"""
+    doctor = PlanDoctor()
+    findings_2arg = doctor.analyze_source_code(code_2arg)
+    dd003_2arg = [f for f in findings_2arg if f.rule_id == "DD003"]
+    assert len(dd003_2arg) == 1, f"Expected 1 DD003 for 2-arg variable, got {len(dd003_2arg)}"
+
+    # Partially dynamic dict in expect_all_or_drop
+    code_partial = """
+import dlt
+
+@dlt.table
+@dlt.expect_all_or_drop({"rule1": "x > 0", "rule2": get_rule_condition()})
+def orders():
+    return dlt.read_stream("raw")
+"""
+    findings_partial = doctor.analyze_source_code(code_partial)
+    dd003_partial = [f for f in findings_partial if f.rule_id == "DD003"]
+    assert len(dd003_partial) == 1, f"Expected 1 DD003 for partial dict, got {len(dd003_partial)}"
+
+
+def test_regulated_comment_scan_above_multiple_decorators() -> None:
+    """Regulated comment scan must check from first decorator line so comments above decorators are detected."""
+    code = """
+# dlt-doctor: regulated
+@dlt.table
+@dlt.expect("r1", "c1 > 0")
+@dlt.expect("r2", "c2 > 0")
+@dlt.expect("r3", "c3 > 0")
+@dlt.expect("r4", "c4 > 0")
+@dlt.expect("r5", "c5 > 0")
+@dlt.expect_or_drop("positive_amount", "amount > 0")
+def widgets():
+    return dlt.read_stream("raw")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd001 = [f for f in findings if f.rule_id == "DD001"]
+    assert len(dd001) == 1
+    # Regulated tables must elevate DD001 severity to HIGH
+    assert dd001[0].severity == DiagnosticSeverity.HIGH, f"Expected HIGH severity for regulated table, got {dd001[0].severity}"
+
+
+def test_dd004_nondeterministic_functions_in_expectations() -> None:
+    """DD004 flags non-deterministic functions (current_timestamp, rand, uuid) in expectations."""
+    code = """
+import dlt
+
+@dlt.table
+@dlt.expect("recent_event", "event_time >= current_timestamp() - INTERVAL 1 DAY")
+@dlt.expect_or_drop("sampled", "rand() > 0.1")
+@dlt.expect_or_fail("has_uuid", "uuid() IS NOT NULL")
+def events():
+    return dlt.read_stream("raw")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd004 = [f for f in findings if f.rule_id == "DD004"]
+    assert len(dd004) == 3, f"Expected 3 DD004 findings, got {len(dd004)}"
+    rule_ids = {f.code_snippet for f in dd004}
+    assert any("current_timestamp" in s for s in rule_ids)
+    assert any("rand" in s for s in rule_ids)
+    assert any("uuid" in s for s in rule_ids)
+
+
+def test_dd001_recommendation_text() -> None:
+    """DD001 recommendation should recommend quarantine routing without unverified heal command."""
+    code = """
+import dlt
+
+@dlt.table
+@dlt.expect_or_drop("positive_amount", "amount > 0")
+def orders():
+    return dlt.read_stream("raw")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd001 = [f for f in findings if f.rule_id == "DD001"]
+    assert len(dd001) == 1
+    assert "dlt-doctor heal" not in dd001[0].recommendation

@@ -177,3 +177,16 @@ register(
         docs_slug="expectations#dd003",
     )
 )
+register(
+    Rule(
+        id="DD004",
+        name="Non-deterministic function in expectation condition",
+        default_severity=DiagnosticSeverity.HIGH,
+        description=(
+            "Expectation condition uses non-deterministic functions (such as current_timestamp, "
+            "rand, uuid). Non-deterministic expectations produce inconsistent validation results "
+            "across streaming micro-batches and pipeline retries."
+        ),
+        docs_slug="expectations#dd004",
+    )
+)
