@@ -107,8 +107,8 @@ class ClusterDoctor:
             chosen_keys = [fallback.name]
 
         keys_clause = ", ".join(chosen_keys)
-        alter_ddl = f"ALTER TABLE {table_name} CLUSTER BY ({keys_clause});"  # nosec B608
-        optimize_ddl = f"OPTIMIZE {table_name};"  # nosec B608
+        alter_ddl = f"ALTER TABLE {table_name} CLUSTER BY ({keys_clause});"
+        optimize_ddl = f"OPTIMIZE {table_name};"
 
         advice_parts = [
             f"Liquid Clustering replaces legacy Hive-style partitioning and Z-Order on {table_name}."

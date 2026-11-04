@@ -2,7 +2,6 @@
 
 import sys
 from typing import Any
-import pytest
 
 
 def test_import_dlt_doctor_does_not_eagerly_load_connect() -> None:
@@ -10,8 +9,10 @@ def test_import_dlt_doctor_does_not_eagerly_load_connect() -> None:
     sys.modules.pop("dlt_doctor", None)
     sys.modules.pop("dlt_doctor.connect", None)
 
-    import dlt_doctor
 
+    import dlt_doctor as doc
+
+    assert doc is not None
     assert "dlt_doctor" in sys.modules
     # connect should NOT be imported eagerly
     assert "dlt_doctor.connect" not in sys.modules

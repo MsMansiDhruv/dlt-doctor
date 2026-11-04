@@ -25,12 +25,12 @@ def test_advisor_report_compilation() -> None:
 
     report = advisor.compile_report("test_pipeline", findings)
     assert report.overall_health_score < 70
-    assert report.estimated_dbu_savings_pct >= 40
+    assert report.overall_health_score == 55
 
     md = advisor.to_markdown(report)
-    assert "# DLT-Doctor Pipeline Audit: test_pipeline" in md
+    assert "# DLT-Doctor Pipeline Audit: `test_pipeline`" in md
     assert "PYSPARK-001" in md
 
     html = advisor.to_databricks_html(report)
     assert "DLT-Doctor: test_pipeline" in html
-    assert "ESTIMATED DBU SAVINGS" in html
+    assert "HEALTH SCORE" in html

@@ -79,15 +79,13 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
 
         # Extract table decorator metadata
         table_name = func.name
-        comment = ""
         for dec in func.decorator_list:
-            if _is_table_decorator(dec):
-                if isinstance(dec, ast.Call):
-                    for kw in dec.keywords:
-                        if kw.arg == "name" and isinstance(kw.value, ast.Constant):
-                            table_name = str(kw.value.value)
-                        elif kw.arg == "comment" and isinstance(kw.value, ast.Constant):
-                            comment = str(kw.value.value)
+            if _is_table_decorator(dec) and isinstance(dec, ast.Call):
+                for kw in dec.keywords:
+                    if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                        table_name = str(kw.value.value)
+                    elif kw.arg == "comment" and isinstance(kw.value, ast.Constant):
+                        str(kw.value.value)
 
         # Extract source table from return expression
         source_table = _extract_source_table(body[0].value) or "source_bronze"
@@ -101,7 +99,7 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
                     condition_sql = str(dec.args[1].value)
                     rules.append(ExpectationRule(rule_name=rule_name, condition_sql=condition_sql))
                 elif len(dec.args) == 1 and isinstance(dec.args[0], ast.Dict):
-                    for k, v in zip(dec.args[0].keys, dec.args[0].values):
+                    for k, v in zip(dec.args[0].keys, dec.args[0].values, strict=False):
                         if (
                             isinstance(k, ast.Constant)
                             and isinstance(k.value, str)
@@ -144,7 +142,7 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
         prefix = modified_lines[: start_line - 1]
         suffix = modified_lines[end_line:]
         snippet_with_newline = new_code if new_code.endswith("\n") else new_code + "\n"
-        modified_lines = prefix + [snippet_with_newline] + suffix
+        modified_lines = [*prefix, snippet_with_newline, *suffix]
 
     healed_code = "".join(modified_lines)
 
@@ -222,8 +220,13 @@ def _extract_source_table(expr: ast.AST | None) -> str | None:
     if expr is None:
         return None
     for node in ast.walk(expr):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in {"read_stream", "read", "table"} and node.args:
-                if isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    return node.args[0].value
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"read_stream", "read", "table"}
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            return node.args[0].value
     return None

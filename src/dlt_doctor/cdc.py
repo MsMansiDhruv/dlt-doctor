@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$|^`[a-zA-Z0-9_\.]+`$")
+
+
+def _validate_identifier(identifier: str) -> str:
+    """Validate SQL identifier against injection patterns."""
+    if not IDENTIFIER_PATTERN.match(identifier.strip()):
+        raise ValueError(f"Invalid SQL identifier '{identifier}'.")
+    return identifier.strip()
 
 
 @dataclass
@@ -15,6 +25,7 @@ class CdcMergeTemplate:
     microbatch_dedup_code: str
     scd1_merge_sql: str
     scd2_merge_sql: str
+    auto_cdc_code: str = ""
 
 
 class CdcDoctor:
@@ -27,22 +38,33 @@ class CdcDoctor:
         event_time_col: str = "updated_at",
         sequence_col: str = "_cdc_seq_id",
         partition_col: str | None = None,
+        source_is_cdf: bool = True,
     ) -> CdcMergeTemplate:
         """Generate deduplication and MERGE patterns to eliminate multiple-match errors."""
-        pk_str = ", ".join(f"'{k}'" for k in primary_keys)
-        pk_join = " AND ".join(f"target.{k} = source.{k}" for k in primary_keys)
+        clean_target = _validate_identifier(target_table)
+        clean_keys = [_validate_identifier(k) for k in primary_keys]
+        clean_time = _validate_identifier(event_time_col)
+        clean_seq = _validate_identifier(sequence_col)
+        clean_part = _validate_identifier(partition_col) if partition_col else None
+
+        pk_str = ", ".join(f"'{k}'" for k in clean_keys)
+        pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
 
         partition_clause = ""
-        if partition_col:
-            partition_clause = f"AND target.{partition_col} = source.{partition_col} "
+        if clean_part:
+            partition_clause = f"AND target.{clean_part} = source.{clean_part} "
+
+        # In-batch deduplication
+        cdf_filter = "        # Drop Change Data Feed update_preimage before deduplication\n        microbatch_df = microbatch_df.filter(F.col('_change_type') != 'update_preimage')\n" if source_is_cdf else ""
 
         dedup_code = (
             "# 1. In-batch window deduplication (prevents Spark 'multiple matches' MERGE error)\n"
             "from pyspark.sql import Window, functions as F\n\n"
             "def merge_cdc_microbatch(microbatch_df, batch_id):\n"
+            f"{cdf_filter}"
             f"    window_spec = Window.partitionBy([{pk_str}]).orderBy(\n"
-            f"        F.col('{event_time_col}').desc(),\n"
-            f"        F.col('{sequence_col}').desc()\n"
+            f"        F.col('{clean_time}').desc(),\n"
+            f"        F.col('{clean_seq}').desc()\n"
             "    )\n"
             "    deduped_df = (\n"
             "        microbatch_df\n"
@@ -50,11 +72,13 @@ class CdcDoctor:
             "        .filter(F.col('_rn') == 1)\n"
             "        .drop('_rn')\n"
             "    )\n"
-            "    deduped_df.createOrReplaceTempView('source_cdc_batch')\n"
+            "    # Clean CDF metadata columns before MERGE to prevent schema collision\n"
+            "    cleaned_df = deduped_df.drop('_commit_version', '_commit_timestamp')\n"
+            "    cleaned_df.createOrReplaceTempView('source_cdc_batch')\n"
         )
 
         scd1_sql = (
-            f"MERGE INTO {target_table} AS target "  # nosec B608
+            f"MERGE INTO {clean_target} AS target "  # nosec B608
             f"USING source_cdc_batch AS source "
             f"ON {pk_join} {partition_clause}"
             f"WHEN MATCHED AND source._change_type = 'delete' THEN DELETE "
@@ -62,21 +86,46 @@ class CdcDoctor:
             f"WHEN NOT MATCHED AND source._change_type != 'delete' THEN INSERT *;"
         )
 
+        # Standard valid Databricks Delta SCD2 staging-union pattern
+        select_keys = ", ".join(f"source.{k}" for k in clean_keys)
+        staged_pk_join = " AND ".join(f"target.{k} = staged.{k}" for k in clean_keys)
+
         scd2_sql = (
-            f"MERGE INTO {target_table} AS target "  # nosec B608
-            f"USING source_cdc_batch AS source "
-            f"ON {pk_join} AND target.is_current = true "
-            f"WHEN MATCHED AND source._change_type = 'update' THEN "
-            f"UPDATE SET is_current = false, valid_to = source.{event_time_col} "
-            f"WHEN NOT MATCHED THEN "
-            f"INSERT (..., is_current, valid_from, valid_to) VALUES (..., true, source.{event_time_col}, NULL);"
+            f"MERGE INTO {clean_target} AS target "  # nosec B608
+            f"USING (\n"
+            f"    SELECT {select_keys}, true AS merge_insert, source.* FROM source_cdc_batch AS source\n"
+            f"    UNION ALL\n"
+            f"    SELECT {select_keys}, false AS merge_insert, source.* FROM source_cdc_batch AS source\n"
+            f"    JOIN {clean_target} AS current_target ON {pk_join} AND current_target.is_current = true\n"
+            f") AS staged "
+            f"ON {staged_pk_join} AND target.is_current = true "
+            f"WHEN MATCHED AND staged.merge_insert = false THEN "
+            f"UPDATE SET is_current = false, valid_to = staged.{clean_time} "
+            f"WHEN NOT MATCHED AND staged.merge_insert = true THEN "
+            f"INSERT *;"
+        )
+
+        auto_cdc_code = (
+            "# Modern Databricks Lakeflow Declarative CDC pattern (Recommended)\n"
+            "import dlt\n"
+            "from pyspark.sql import functions as F\n\n"
+            "dlt.apply_changes(\n"
+            f"    target='{clean_target}',\n"
+            "    source='source_cdc_stream',\n"
+            f"    keys=[{pk_str}],\n"
+            f"    sequence_by=F.col('{clean_seq}'),\n"
+            "    apply_as_deletes=F.expr(\"_change_type = 'delete'\"),\n"
+            "    except_column_list=['_change_type', '_commit_version', '_commit_timestamp'],\n"
+            "    stored_as_scd_type='1'  # or '2' for historical dimensional tracking\n"
+            ")\n"
         )
 
         return CdcMergeTemplate(
-            primary_keys=primary_keys,
-            event_time_col=event_time_col,
-            target_table=target_table,
+            primary_keys=clean_keys,
+            event_time_col=clean_time,
+            target_table=clean_target,
             microbatch_dedup_code=dedup_code,
             scd1_merge_sql=scd1_sql,
             scd2_merge_sql=scd2_sql,
+            auto_cdc_code=auto_cdc_code,
         )

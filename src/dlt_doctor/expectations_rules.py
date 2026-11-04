@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Any
 
 import sqlglot
 
@@ -30,7 +29,7 @@ class ExpectationAstVisitor(ast.NodeVisitor):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     resolved: dict[str, str] = {}
-                    for k, v in zip(node.value.keys, node.value.values):
+                    for k, v in zip(node.value.keys, node.value.values, strict=False):
                         if (
                             isinstance(k, ast.Constant)
                             and isinstance(k.value, str)
@@ -45,7 +44,6 @@ class ExpectationAstVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Inspect pipeline function definitions and their expectation decorators."""
         table_name = node.name
-        is_table_func = False
 
         # Extract table name from table decorator if present
         for dec in node.decorator_list:
@@ -56,12 +54,10 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                 "materialized_view",
                 "streaming_table",
                 "temporary_view",
-            }:
-                is_table_func = True
-                if isinstance(dec, ast.Call):
-                    for kw in dec.keywords:
-                        if kw.arg == "name" and isinstance(kw.value, ast.Constant):
-                            table_name = str(kw.value.value)
+            } and isinstance(dec, ast.Call):
+                for kw in dec.keywords:
+                    if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                        table_name = str(kw.value.value)
 
         # Check if table is marked regulated via comment or config
         has_regulated_comment = self._has_comment_in_scope(node, "# dlt-doctor: regulated")
@@ -87,31 +83,34 @@ class ExpectationAstVisitor(ast.NodeVisitor):
 
                     self._emit_dd001(node, table_name, is_regulated, rule_name, lineno)
 
-            elif dec_name == "expect_all_or_drop":
-                if isinstance(dec, ast.Call) and dec.args:
-                    arg = dec.args[0]
-                    resolved_dict: dict[str, str] | None = None
-                    if isinstance(arg, ast.Dict):
-                        resolved_dict = {}
-                        for k, v in zip(arg.keys, arg.values):
-                            if (
-                                isinstance(k, ast.Constant)
-                                and isinstance(k.value, str)
-                                and isinstance(v, ast.Constant)
-                                and isinstance(v.value, str)
-                            ):
-                                resolved_dict[k.value] = v.value
-                    elif isinstance(arg, ast.Name) and arg.id in self.module_dicts:
-                        resolved_dict = self.module_dicts[arg.id]
-                    else:
-                        var_name = getattr(arg, "id", "dynamic_expression")
-                        self._emit_dd003(node, var_name, lineno)
+            elif (
+                dec_name == "expect_all_or_drop"
+                and isinstance(dec, ast.Call)
+                and dec.args
+            ):
+                arg = dec.args[0]
+                resolved_dict: dict[str, str] | None = None
+                if isinstance(arg, ast.Dict):
+                    resolved_dict = {}
+                    for k, v in zip(arg.keys, arg.values, strict=False):
+                        if (
+                            isinstance(k, ast.Constant)
+                            and isinstance(k.value, str)
+                            and isinstance(v, ast.Constant)
+                            and isinstance(v.value, str)
+                        ):
+                            resolved_dict[k.value] = v.value
+                elif isinstance(arg, ast.Name) and arg.id in self.module_dicts:
+                    resolved_dict = self.module_dicts[arg.id]
+                else:
+                    var_name = getattr(arg, "id", "dynamic_expression")
+                    self._emit_dd003(node, var_name, lineno)
 
-                    if resolved_dict:
-                        for r_name, c_sql in resolved_dict.items():
-                            expectation_conditions.append((r_name, c_sql))
+                if resolved_dict:
+                    for r_name, c_sql in resolved_dict.items():
+                        expectation_conditions.append((r_name, c_sql))
 
-                    self._emit_dd001(node, table_name, is_regulated, "expect_all_or_drop", lineno)
+                self._emit_dd001(node, table_name, is_regulated, "expect_all_or_drop", lineno)
 
         if expectation_conditions:
             self.all_expectation_conditions.extend(expectation_conditions)
@@ -143,10 +142,7 @@ class ExpectationAstVisitor(ast.NodeVisitor):
         """Check if preceding lines or function body contains a specific comment."""
         start_line = max(0, node.lineno - 4)
         end_line = min(len(self.source_lines), getattr(node, "end_lineno", node.lineno) or node.lineno)
-        for i in range(start_line, end_line):
-            if comment in self.source_lines[i]:
-                return True
-        return False
+        return any(comment in self.source_lines[i] for i in range(start_line, end_line))
 
     def _emit_dd001(
         self,
@@ -213,7 +209,7 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                 }
                 if cols:
                     referenced_cols[r_name] = cols
-            except Exception:
+            except sqlglot.errors.SqlglotError:
                 continue
 
         all_cols: set[str] = set()

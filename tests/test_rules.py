@@ -1,9 +1,7 @@
 """Tests for rule registry and rules DD001, DD002, DD003."""
 
-import pytest
 
 from dlt_doctor.catalyst import DiagnosticSeverity, PlanDoctor
-from dlt_doctor.config import DoctorConfig
 from dlt_doctor.expectations_rules import audit_sql_source
 from dlt_doctor.rules import get_rule, list_rules, rule_exists
 

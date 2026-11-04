@@ -31,7 +31,7 @@ class DiagnosticFinding:
     title: str
     impact_summary: str
     recommendation: str
-    line_number: int | None = None
+    line_number: int | str | None = None
     estimated_dbu_impact: str = "Low"
     code_snippet: str = ""
 
@@ -163,6 +163,11 @@ class PySparkCodeVisitor(ast.NodeVisitor):
                     )
                 )
             elif len(node.args) >= 1:
+                coalesce_hint = ".coalesce()"
+                if isinstance(node.args[0], ast.Constant) and isinstance(
+                    node.args[0].value, int
+                ):
+                    coalesce_hint = f".coalesce({node.args[0].value})"
                 self.findings.append(
                     DiagnosticFinding(
                         rule_id="PYSPARK-004",
@@ -172,7 +177,7 @@ class PySparkCodeVisitor(ast.NodeVisitor):
                             "Explicit .repartition() call forces a shuffle across cluster network."
                         ),
                         recommendation=(
-                            "If reducing partitions before write, consider .coalesce() to avoid network shuffle; "
+                            f"If reducing partitions before write, consider {coalesce_hint} to avoid network shuffle; "
                             "if increasing parallelism or redistributing data, .repartition() is expected."
                         ),
                         line_number=node.lineno,
@@ -181,46 +186,49 @@ class PySparkCodeVisitor(ast.NodeVisitor):
                 )
 
         # Check for chained withColumn calls (only report once on outermost call in chain)
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "withColumn":
-            if id(node) not in self._processed_with_column_ids:
-                chain = [node]
-                curr = node
-                while (
-                    isinstance(curr.func, ast.Attribute)
-                    and curr.func.attr == "withColumn"
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "withColumn"
+            and id(node) not in self._processed_with_column_ids
+        ):
+            chain = [node]
+            curr = node
+            while (
+                isinstance(curr.func, ast.Attribute)
+                and curr.func.attr == "withColumn"
+            ):
+                if (
+                    isinstance(curr.func.value, ast.Call)
+                    and isinstance(curr.func.value.func, ast.Attribute)
+                    and curr.func.value.func.attr == "withColumn"
                 ):
-                    if (
-                        isinstance(curr.func.value, ast.Call)
-                        and isinstance(curr.func.value.func, ast.Attribute)
-                        and curr.func.value.func.attr == "withColumn"
-                    ):
-                        curr = curr.func.value
-                        chain.append(curr)
-                    else:
-                        break
-                for c in chain:
-                    self._processed_with_column_ids.add(id(c))
+                    curr = curr.func.value
+                    chain.append(curr)
+                else:
+                    break
+            for c in chain:
+                self._processed_with_column_ids.add(id(c))
 
-                chain_depth = len(chain)
-                if chain_depth >= 4:
-                    self.findings.append(
-                        DiagnosticFinding(
-                            rule_id="PYSPARK-002",
-                            severity=DiagnosticSeverity.HIGH,
-                            title="Deep withColumn cascade",
-                            impact_summary=(
-                                f"Detected {chain_depth} chained .withColumn() calls. "
-                                "Each call adds a Project node to Catalyst query plan, "
-                                "causing linear plan compilation degradation and potential StackOverflowError."
-                            ),
-                            recommendation=(
-                                "Consolidate into a single df.withColumns({...}) call (Spark 3.3+) "
-                                "or a single df.select('*', ...)."
-                            ),
-                            line_number=node.lineno,
-                            estimated_dbu_impact="High",
-                        )
+            chain_depth = len(chain)
+            if chain_depth >= 4:
+                self.findings.append(
+                    DiagnosticFinding(
+                        rule_id="PYSPARK-002",
+                        severity=DiagnosticSeverity.HIGH,
+                        title="Deep withColumn cascade",
+                        impact_summary=(
+                            f"Detected {chain_depth} chained .withColumn() calls. "
+                            "Each call adds a Project node to Catalyst query plan, "
+                            "causing linear plan compilation degradation and potential StackOverflowError."
+                        ),
+                        recommendation=(
+                            "Consolidate into a single df.withColumns({...}) call (Spark 3.3+) "
+                            "or a single df.select('*', ...)."
+                        ),
+                        line_number=node.lineno,
+                        estimated_dbu_impact="High",
                     )
+                )
 
         self.generic_visit(node)
 
@@ -246,6 +254,16 @@ class PlanDoctor:
             if m:
                 for r in m.group(1).split(","):
                     file_ignores.add(r.strip().upper())
+
+        # If file is SQL or starts with SQL keyword, audit via SQL scanner
+        if (file_name and file_name.lower().endswith(".sql")) or re.match(
+            r"^\s*(SELECT|CREATE|MERGE|WITH|INSERT|ALTER|DROP)\b",
+            source_code,
+            re.IGNORECASE,
+        ):
+            from dlt_doctor.expectations_rules import audit_sql_source
+
+            return audit_sql_source(source_code, config=config)
 
         try:
             tree = ast.parse(source_code)

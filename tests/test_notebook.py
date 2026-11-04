@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 import pytest
 
 from dlt_doctor.notebook import extract_notebook_code, is_notebook_file

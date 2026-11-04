@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from dlt_doctor.catalyst import DiagnosticSeverity
 
-try:
-    import tomllib  # Python 3.11+
-except ImportError:
-    import tomli as tomllib  # type: ignore
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # type: ignore[no-redef, import-not-found]
 
 
 @dataclass
@@ -33,10 +35,11 @@ class DoctorConfig:
             return False
         if rule_upper in [i.upper() for i in self.ignore]:
             return False
-        if file_name and file_name in self.per_file_ignores:
-            if rule_upper in [i.upper() for i in self.per_file_ignores[file_name]]:
-                return False
-        return True
+        return not (
+            file_name
+            and file_name in self.per_file_ignores
+            and rule_upper in [i.upper() for i in self.per_file_ignores[file_name]]
+        )
 
     def get_severity(self, rule_id: str, default: DiagnosticSeverity) -> DiagnosticSeverity:
         """Get severity of a rule with config overrides applied."""
@@ -78,8 +81,8 @@ def load_config(root_path: Path | str | None = None) -> DoctorConfig:
 
                 if section:
                     return _parse_config_dict(section)
-            except Exception:
-                pass
+            except (tomllib.TOMLDecodeError, OSError):
+                return DoctorConfig()
 
     return DoctorConfig()
 
@@ -94,10 +97,8 @@ def _parse_config_dict(data: dict[str, Any]) -> DoctorConfig:
 
     severity_overrides: dict[str, DiagnosticSeverity] = {}
     for r_id, sev in data.get("severity_overrides", {}).items():
-        try:
+        with contextlib.suppress(ValueError):
             severity_overrides[r_id.upper()] = DiagnosticSeverity(str(sev).upper())
-        except ValueError:
-            pass
 
     return DoctorConfig(
         select=data.get("select", []),

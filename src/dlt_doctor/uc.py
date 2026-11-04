@@ -165,9 +165,7 @@ class UcDoctor:
                     is_spark_table_call = False
                     if node.func.attr == "table":
                         caller = node.func.value
-                        if isinstance(caller, ast.Name) and caller.id == "spark":
-                            is_spark_table_call = True
-                        elif isinstance(caller, ast.Attribute) and caller.attr in {"read", "readStream"}:
+                        if (isinstance(caller, ast.Name) and caller.id == "spark") or (isinstance(caller, ast.Attribute) and caller.attr in {"read", "readStream"}):
                             is_spark_table_call = True
 
                     if is_spark_table_call and node.args:

@@ -79,7 +79,7 @@ class SchemaDoctor:
         # 1. Check for incoming columns not in target table (Additions)
         for col, inc_type in norm_incoming.items():
             if col not in norm_existing:
-                ddl = f"ALTER TABLE {table_name} ADD COLUMNS ({col} {inc_type});"  # nosec B608
+                ddl = f"ALTER TABLE {table_name} ADD COLUMNS ({col} {inc_type});"
                 generated_ddl.append(ddl)
                 changes.append(
                     SchemaChange(

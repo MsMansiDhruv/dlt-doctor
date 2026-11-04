@@ -63,7 +63,7 @@ class HistoryDoctor:
             rec_retention = f"interval {log_retention_days} days"
 
         tblproperties = (
-            f"ALTER TABLE {table_name} SET TBLPROPERTIES (\n"  # nosec B608
+            f"ALTER TABLE {table_name} SET TBLPROPERTIES (\n"
             f"  'delta.checkpointInterval' = '{rec_checkpoint_interval}',\n"
             f"  'delta.logRetentionDuration' = '{rec_retention}'\n"
             f");"

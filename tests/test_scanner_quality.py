@@ -4,9 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from dlt_doctor.advisor import AdvisorDoctor
-from dlt_doctor.catalyst import DiagnosticSeverity, PlanDoctor
-from dlt_doctor.config import DoctorConfig
+from dlt_doctor.catalyst import PlanDoctor
 from dlt_doctor.scanner import DirectoryScanner
 
 

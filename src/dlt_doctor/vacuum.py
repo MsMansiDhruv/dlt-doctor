@@ -74,8 +74,8 @@ class VacuumDoctor:
             int(max_streaming_lag_hours * 2.0),
         )
 
-        vacuum_sql = f"VACUUM {table_name} RETAIN {safe_hours} HOURS;"  # nosec B608
-        dry_run_sql = f"VACUUM {table_name} RETAIN {safe_hours} HOURS DRY RUN;"  # nosec B608
+        vacuum_sql = f"VACUUM {table_name} RETAIN {safe_hours} HOURS;"
+        dry_run_sql = f"VACUUM {table_name} RETAIN {safe_hours} HOURS DRY RUN;"
 
         guidance = (
             f"Always execute the DRY RUN first to inspect the list of tombstoned candidate Parquet files. "

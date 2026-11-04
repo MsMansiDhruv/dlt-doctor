@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 import datetime
+import re
 from dataclasses import dataclass
 from typing import Any
+
+IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$|^`[a-zA-Z0-9_\.]+`$")
+
+
+def _validate_identifier(identifier: str) -> str:
+    """Validate SQL identifier against injection patterns."""
+    if not IDENTIFIER_PATTERN.match(identifier.strip()):
+        raise ValueError(f"Invalid SQL identifier '{identifier}'. Only alphanumeric and dotted names are allowed.")
+    return identifier.strip()
 
 
 @dataclass
@@ -41,24 +51,35 @@ class RestatementDoctor:
         window_size_days: int,
         partition_col: str = "order_date",
         match_key: str = "id",
+        source_table: str = "source_recalculated",
+        delete_unmatched: bool = True,
     ) -> BlastRadiusScope:
         """Calculate the exact affected partition window [t_late, t_late + W - 1]."""
+        clean_target = _validate_identifier(target_table)
+        clean_source = _validate_identifier(source_table)
+        clean_part = _validate_identifier(partition_col)
+        clean_key = _validate_identifier(match_key)
+
         t_late = datetime.date.fromisoformat(late_date_iso)
         t_end = t_late + datetime.timedelta(days=window_size_days - 1)
 
         t_late_str = t_late.isoformat()
         t_end_str = t_end.isoformat()
 
-        pruning_clause = f"{partition_col} BETWEEN '{t_late_str}' AND '{t_end_str}'"
+        pruning_clause = f"{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}'"
+
+        delete_clause = ""
+        if delete_unmatched:
+            delete_clause = f" WHEN NOT MATCHED BY SOURCE AND target.{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}' THEN DELETE"
 
         merge_sql = (
-            f"MERGE INTO {target_table} AS target "  # nosec B608
-            f"USING source_recalculated AS source "
-            f"ON target.{partition_col} = source.{partition_col} "
-            f"AND target.{match_key} = source.{match_key} "
-            f"AND target.{partition_col} BETWEEN '{t_late_str}' AND '{t_end_str}' "
+            f"MERGE INTO {clean_target} AS target "  # nosec B608
+            f"USING {clean_source} AS source "
+            f"ON target.{clean_part} = source.{clean_part} "
+            f"AND target.{clean_key} = source.{clean_key} "
+            f"AND target.{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}' "
             f"WHEN MATCHED THEN UPDATE SET * "
-            f"WHEN NOT MATCHED THEN INSERT *;"
+            f"WHEN NOT MATCHED THEN INSERT *{delete_clause};"
         )
 
         return BlastRadiusScope(
@@ -95,8 +116,8 @@ class RestatementDoctor:
         filter_columns: list[str],
         join_columns: list[str],
     ) -> str:
-        """Generate optimal Delta Liquid Clustering DDL statement."""
-        # Pick top 2-4 candidate keys
+        """Generate optimal Delta Liquid Clustering DDL statement (backward compatible)."""
+        clean_table = _validate_identifier(table_name)
         candidates: list[str] = []
         for col in join_columns + filter_columns:
             clean = col.strip().lower()
@@ -105,4 +126,4 @@ class RestatementDoctor:
 
         chosen_keys = candidates[:3]
         keys_str = ", ".join(chosen_keys)
-        return f"ALTER TABLE {table_name} CLUSTER BY ({keys_str});"  # nosec B608
+        return f"ALTER TABLE {clean_table} CLUSTER BY ({keys_str});"

@@ -1,6 +1,7 @@
 """Tests for ExpectationDoctor DLT quarantine routing."""
 
 import ast
+
 import pytest
 
 from dlt_doctor.expectations import ExpectationDoctor, ExpectationRule
@@ -26,7 +27,7 @@ def test_build_quarantine_routing_null_safe() -> None:
 
 def test_three_valued_logic_completeness() -> None:
     """Pure-Python property verification of three-valued-logic:
-    valid ∪ quarantine = all_records, and valid ∩ quarantine = ∅.
+    valid union quarantine = all_records, and valid intersect quarantine is empty.
     """
     records = [
         {"amount": 100, "status": "A"},    # passes

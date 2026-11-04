@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
 import os
-from typing import Any
 import urllib.error
 import urllib.request
+from dataclasses import dataclass, field
+from typing import Any
 
 from dlt_doctor.compaction import CompactionDoctor
 from dlt_doctor.history import HistoryDoctor
@@ -63,10 +63,12 @@ class WorkspaceInspector:
         host: str | None = None,
         token: str | None = None,
         warehouse_id: str | None = None,
+        mock: bool = False,
     ) -> None:
-        self.host = (host or os.getenv("DATABRICKS_HOST", "")).rstrip("/")
+        self.host = (host or os.getenv("DATABRICKS_HOST") or "").rstrip("/")
         self.token = token or os.getenv("DATABRICKS_TOKEN", "")
         self.warehouse_id = warehouse_id or os.getenv("DATABRICKS_WAREHOUSE_ID", "")
+        self.mock = mock
         self.compaction_doctor = CompactionDoctor()
         self.history_doctor = HistoryDoctor()
         self.vacuum_doctor = VacuumDoctor()
@@ -101,7 +103,7 @@ class WorkspaceInspector:
 
         rows: list[dict[str, Any]] = []
         for row in data_rows:
-            rows.append(dict(zip(col_names, row)))
+            rows.append(dict(zip(col_names, row, strict=False)))
         return rows
 
     def inspect_table(
@@ -111,6 +113,15 @@ class WorkspaceInspector:
         mock_history: list[dict[str, Any]] | None = None,
     ) -> TableInspectionReport:
         """Inspect a table using live SQL API or provided metadata."""
+        if mock_detail is None and self.mock:
+            mock_detail = {
+                "numFiles": 5000,
+                "sizeInBytes": 20 * 1024 * 1024 * 1024,
+                "clusteringColumns": ["customer_id", "order_date"],
+                "partitionColumns": [],
+            }
+            mock_history = [{"version": i} for i in range(48)]
+
         if mock_detail is not None:
             detail = mock_detail
             history = mock_history or []

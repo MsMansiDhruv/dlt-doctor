@@ -57,9 +57,9 @@ class CompactionDoctor:
                 small_file_pct=0.0,
                 average_file_size_mb=0.0,
                 has_compaction_debt=False,
-                recommended_optimize_sql=f"OPTIMIZE {table_name};",  # nosec B608
+                recommended_optimize_sql=f"OPTIMIZE {table_name};",
                 recommended_tblproperties_sql=(
-                    f"ALTER TABLE {table_name} SET TBLPROPERTIES ("  # nosec B608
+                    f"ALTER TABLE {table_name} SET TBLPROPERTIES ("
                     "delta.autoOptimize.optimizeWrite = true, "
                     "delta.autoOptimize.autoCompact = true);"
                 ),
@@ -76,9 +76,9 @@ class CompactionDoctor:
         has_debt = small_file_pct >= 40.0 and total_files >= 20
         findings: list[DiagnosticFinding] = []
 
-        optimize_sql = f"OPTIMIZE {table_name};"  # nosec B608
+        optimize_sql = f"OPTIMIZE {table_name};"
         tblprops_sql = (
-            f"ALTER TABLE {table_name} SET TBLPROPERTIES ("  # nosec B608
+            f"ALTER TABLE {table_name} SET TBLPROPERTIES ("
             "delta.autoOptimize.optimizeWrite = true, "
             "delta.autoOptimize.autoCompact = true);"
         )

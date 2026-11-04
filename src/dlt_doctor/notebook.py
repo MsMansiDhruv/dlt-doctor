@@ -27,8 +27,8 @@ def is_notebook_file(path: Path | str) -> bool:
             head = p.read_text(encoding="utf-8", errors="ignore")[:300]
             if "# Databricks notebook source" in head:
                 return True
-        except Exception:
-            pass
+        except (OSError, UnicodeDecodeError):
+            return False
     return False
 
 
@@ -70,7 +70,7 @@ def _parse_ipynb_cells(path: Path) -> list[ParsedCell]:
         # Handle cell magics: skip entire non-code cell
         if first_line.startswith(("%%sql", "%sql")):
             # Extract SQL body
-            sql_lines = lines[1:] if first_line in {"%%sql", "%sql"} else [first_line[4:].strip() + "\n"] + lines[1:]
+            sql_lines = lines[1:] if first_line in {"%%sql", "%sql"} else [first_line[4:].strip() + "\n", *lines[1:]]
             parsed_cells.append(
                 ParsedCell(
                     cell_index=idx,
@@ -78,7 +78,7 @@ def _parse_ipynb_cells(path: Path) -> list[ParsedCell]:
                     source_code="".join(sql_lines),
                 )
             )
-        elif first_line.startswith(("%md", "%sh", "%run", "%pip", "!", "%%sh", "%%bash")):
+        elif first_line.startswith(("%md", "%%sh", "%%bash", "%%html", "%%javascript", "%fs")):
             parsed_cells.append(
                 ParsedCell(
                     cell_index=idx,
@@ -87,7 +87,7 @@ def _parse_ipynb_cells(path: Path) -> list[ParsedCell]:
                 )
             )
         else:
-            # Python code cell: filter out line magics (e.g. %load_ext, %pip)
+            # Python code cell: filter out line magics (e.g. %load_ext, %pip, !pip, %run)
             sanitized: list[str] = []
             for line in lines:
                 stripped = line.strip()
@@ -114,7 +114,7 @@ def _parse_databricks_py_cells(path: Path) -> list[ParsedCell]:
 
     for idx, block in enumerate(raw_blocks, start=1):
         lines = block.splitlines(keepends=True)
-        non_empty = [l for l in lines if l.strip() and not l.strip().startswith("# Databricks notebook source")]
+        non_empty = [line for line in lines if line.strip() and not line.strip().startswith("# Databricks notebook source")]
         if not non_empty:
             continue
 
@@ -123,8 +123,8 @@ def _parse_databricks_py_cells(path: Path) -> list[ParsedCell]:
         if "# MAGIC %sql" in first_line:
             # Extract SQL lines, stripping # MAGIC
             sql_lines = []
-            for l in non_empty:
-                stripped = l.strip()
+            for line in non_empty:
+                stripped = line.strip()
                 if stripped.startswith("# MAGIC %sql"):
                     rest = stripped.replace("# MAGIC %sql", "").strip()
                     if rest:
@@ -149,10 +149,10 @@ def _parse_databricks_py_cells(path: Path) -> list[ParsedCell]:
         else:
             # Python cell
             clean_lines = []
-            for l in lines:
-                if l.strip().startswith("# Databricks notebook source"):
+            for line in lines:
+                if line.strip().startswith("# Databricks notebook source"):
                     continue
-                clean_lines.append(l if l.endswith("\n") else l + "\n")
+                clean_lines.append(line if line.endswith("\n") else line + "\n")
             parsed_cells.append(
                 ParsedCell(
                     cell_index=idx,

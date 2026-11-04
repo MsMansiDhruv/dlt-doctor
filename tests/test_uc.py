@@ -24,9 +24,9 @@ checkpoint_path = "dbfs:/mnt/checkpoints/orders"
         "/Volumes/prod_lakehouse/bronze/landing/raw_orders/2026"
         in plan.path_mapping.values()
     )
-    assert (
-        "CREATE VOLUME IF NOT EXISTS prod_lakehouse.bronze.landing;"
-        in plan.generated_volume_ddl
+    assert any(
+        "CREATE EXTERNAL VOLUME IF NOT EXISTS prod_lakehouse.bronze.landing" in ddl
+        for ddl in plan.generated_volume_ddl
     )
 
 
