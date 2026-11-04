@@ -1,0 +1,7 @@
+- id: dlt-doctor
+  name: dlt-doctor
+  description: "Static optimization engine and quality accelerator for Databricks Lakeflow, DLT, and PySpark"
+  entry: dlt-doctor analyze
+  language: python
+  types_or: [python, sql, jupyter]
+  additional_dependencies: ["sqlglot>=20.0.0", "rich>=13.0.0"]

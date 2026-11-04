@@ -1,16 +1,36 @@
 name: "dlt-doctor"
-description: "Static optimization engine and quality accelerator for Databricks DLT, Auto Loader, and PySpark"
+description: "Production optimization and quality engine for Databricks Lakeflow, DLT, and PySpark"
 author: "Mansi Dhruv"
 
 inputs:
   path:
-    description: "Path to Python (.py), notebook (.ipynb), or directory to analyze"
+    description: "Path to Python (.py), SQL (.sql), notebook (.ipynb), or directory to analyze"
     required: true
     default: "src"
   format:
-    description: "Output format: text, markdown, or html"
+    description: "Output format: text, markdown, json, sarif, or html"
     required: false
     default: "text"
+  fail-on:
+    description: "Failure severity threshold: CRITICAL, HIGH, MEDIUM, LOW, or NONE"
+    required: false
+    default: "HIGH"
+  config:
+    description: "Path to custom configuration file (e.g. pyproject.toml)"
+    required: false
+    default: ""
+  sarif-output:
+    description: "Optional file path to write SARIF diagnostic output"
+    required: false
+    default: ""
+  python-version:
+    description: "Python version for action execution"
+    required: false
+    default: "3.10"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
 
 runs:
   using: "composite"
@@ -18,18 +38,40 @@ runs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.11"
+        python-version: ${{ inputs.python-version }}
 
     - name: Install dlt-doctor
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         python -m pip install --upgrade pip
         python -m pip install "${{ github.action_path }}"
 
     - name: Run dlt-doctor analyze
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_SARIF_OUTPUT: ${{ inputs.sarif-output }}
       run: |
-        dlt-doctor analyze "${{ inputs.path }}" --format "${{ inputs.format }}"
+        CMD=(dlt-doctor analyze "$INPUT_PATH" --format "$INPUT_FORMAT" --fail-on "$INPUT_FAIL_ON")
+        if [ -n "$INPUT_CONFIG" ]; then
+          CMD+=(--config "$INPUT_CONFIG")
+        fi
+
+        MD_OUTPUT=$(dlt-doctor analyze "$INPUT_PATH" --format markdown || true)
+        if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+          echo "$MD_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        if [ -n "$INPUT_SARIF_OUTPUT" ]; then
+          dlt-doctor analyze "$INPUT_PATH" --format sarif > "$INPUT_SARIF_OUTPUT" || true
+        fi
+
+        "${CMD[@]}"
 
 branding:
   icon: "activity"

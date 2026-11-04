@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install ruff bandit pytest build sqlglot rich
+          pip install ruff bandit pytest mypy build sqlglot rich tomli
 
       - name: Validate syntax
         run: python -m compileall src tests
@@ -39,6 +39,9 @@ jobs:
 
       - name: Ruff format check
         run: ruff format --check src tests
+
+      - name: Type checking
+        run: mypy src
 
       - name: Security scan
         run: bandit -r src
