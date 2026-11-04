@@ -1,6 +1,6 @@
 # Zero-Loss Quarantine (`ExpectationDoctor`)
 
-Native DLT `@dlt.expect_or_drop` silently deletes records that fail validation constraints. In regulatory and financial environments, silent drops violate compliance and auditability.
+Native DLT `@dlt.expect_or_drop` and `@dp.expect_or_drop` silently delete records that fail validation constraints. In regulatory and financial environments, silent drops violate compliance and auditability.
 
 ## The Dual-Routing Solution
 
@@ -9,10 +9,19 @@ Native DLT `@dlt.expect_or_drop` silently deletes records that fail validation c
 1. **Clean Table**: Valid records flowing forward into Silver / Gold.
 2. **Quarantine Table**: Invalid records isolated with violation metadata and timestamping.
 
+Both branches are strictly complete and disjoint via SQL three-valued logic (NULL-safe `coalesce` wrapping).
+
+## Automated Healing via CLI
+
+To automatically detect `@expect_or_drop` anti-patterns and synthesize non-destructive single-pass quarantine tables:
+
+```bash
+dlt-doctor heal src/pipelines/orders_silver.py
+```
+
 ## Python API Usage
 
 ```python
-import dlt
 from dlt_doctor import ExpectationDoctor, ExpectationRule
 
 doctor = ExpectationDoctor()
@@ -22,15 +31,7 @@ rules = [
 ]
 plan = doctor.build_quarantine_routing("silver_orders", rules)
 
-@dlt.table(name=plan.target_clean_table)
-def silver_orders():
-    return dlt.read_stream("bronze_orders").filter(plan.valid_filter_sql)
-
-@dlt.table(name=plan.target_quarantine_table)
-def silver_orders_quarantine():
-    return (
-        dlt.read_stream("bronze_orders")
-        .filter(plan.invalid_filter_sql)
-        .withColumn("_quarantined_at", F.current_timestamp())
-    )
+# Generates single-pass Lakeflow pipeline code with _failed_rules tracking
+pipeline_code = plan.generate_pipeline_code(source_table="bronze_orders", flavor="dp")
+print(pipeline_code)
 ```

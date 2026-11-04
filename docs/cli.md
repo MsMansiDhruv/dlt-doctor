@@ -71,3 +71,23 @@ Connects to Databricks SQL warehouse to audit fragmentation debt and commit velo
 ```bash
 dlt-doctor inspect-table main.gold.orders --warehouse-id <warehouse_id>
 ```
+
+
+### 11. Automated Quarantine Synthesis (`heal`)
+Synthesizes zero-loss single-pass quarantine tables and displays unified diffs:
+```bash
+dlt-doctor heal src/pipelines/orders_silver.py
+```
+
+### 12. Rule Exploration (`rules` and `explain`)
+Inspect registered diagnostic rules and their full technical rationales:
+```bash
+dlt-doctor rules
+dlt-doctor explain DD001
+```
+
+### 13. Quarantine Replay (`replay`)
+Generate idempotent Delta MERGE SQL to reprocess quarantined records into target tables:
+```bash
+dlt-doctor replay --quarantine-table main.silver.orders_quarantine --target-table main.silver.orders --keys order_id
+```

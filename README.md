@@ -3,7 +3,7 @@
 <img src="./assets/dlt-doctor-mascot.svg" alt="dlt-doctor visual identity" width="100%" />
 
 <p align="center">
-  <strong>Production Optimization Engine and Quality Accelerator for Databricks DLT, Auto Loader, and PySpark</strong>
+  <strong>Production Optimization Engine and Quality Accelerator for Databricks Lakeflow Spark Declarative Pipelines, DLT, and PySpark</strong>
 </p>
 
 [![PyPI](https://img.shields.io/badge/PyPI-dlt--doctor-3776AB?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/dlt-doctor/)
@@ -12,15 +12,15 @@
 [![Storage](https://img.shields.io/badge/Storage-Delta%20Lake%20%26%20CDF-2EE6A7?style=for-the-badge&logo=delta&logoColor=white)](https://delta.io/)
 [![Governance](https://img.shields.io/badge/Governance-Unity%20Catalog-0E1726?style=for-the-badge&logo=databricks&logoColor=2EE6A7)](https://www.databricks.com/product/unity-catalog)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
-[![CI Tests](https://img.shields.io/badge/CI-63%20Tests%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
+[![CI Tests](https://img.shields.io/badge/CI-99%20Tests%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
 
 <p align="center">
   <a href="https://msmansidhruv.github.io/dlt-doctor/">Documentation</a> •
   <a href="#the-story">The Problem</a> •
   <a href="#showcase-video">Video</a> •
   <a href="#benchmarks">Benchmarks</a> •
-  <a href="#architecture">Architecture</a> •
-  <a href="#why-dlt-doctor-vs-the-100k-saas-stack">SaaS Comparison</a> •
+  <a href="#where-dlt-doctor-fits">Where It Fits</a> •
+  <a href="#diagnostic-rules">Diagnostic Rules</a> •
   <a href="#quickstart">Quickstart</a> •
   <a href="#production-walkthrough">Walkthrough</a>
 </p>
@@ -31,16 +31,14 @@
 
 ## The Story
 
-Every data engineer working on Databricks knows the exact feeling:
+Every data engineer working on Databricks Lakeflow Spark Declarative Pipelines (formerly Delta Live Tables) knows the exact feeling:
 
 It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot perform Merge as multiple source rows matched`. Or worse: native DLT `expect_or_drop` silently purged 50,000 regulatory records, and nobody noticed until audit season. You spin up an interactive cluster to debug, burning DBUs while waiting 4 minutes for workers to allocate, only to discover that someone chained 8 `.withColumn()` calls and wrote a row-level Python `@udf` that disabled Whole-Stage CodeGen and created massive JVM-to-Python socket serialization.
 
-Meanwhile, enterprise SaaS observability tools cost \$50,000 to \$150,000 annually just to send a Slack alert *after* corrupted data has already entered downstream Gold tables.
-
 `dlt-doctor` is the antidote:
-- **Zero cluster spend**: Statically audits your PySpark AST and configurations in under 50ms locally or inside CI before code merges.
-- **Zero silent data loss**: Replaces destructive `expect_or_drop` with dual-routing quarantine streams.
-- **Surgical healing**: Calculates bounded late-data partition blast radii to restate historical rolling windows with 98.1% less I/O scan than full-table reloads.
+- **Zero cluster spend**: Statically audits your PySpark AST and configurations locally or inside CI before code merges.
+- **Zero silent data loss**: Intercepts destructive `expect_or_drop` policies and synthesizes complete, disjoint, three-valued-logic NULL-safe single-pass quarantine streams via `--auto-heal`.
+- **Surgical healing**: Calculates bounded late-data partition blast radii to restate historical rolling windows without full-table scans.
 
 ---
 
@@ -53,7 +51,7 @@ Meanwhile, enterprise SaaS observability tools cost \$50,000 to \$150,000 annual
 </a>
 
 <p align="center">
-  <sub>15-Second Showcase: Eliminate silent drops, accelerate PySpark execution, and avoid the $100k SaaS tax. Click to view full 1080p video.</sub>
+  <sub>15-Second Showcase: Eliminate silent drops, accelerate PySpark execution, and shift quality left. Click to view full 1080p video.</sub>
 </p>
 
 </div>
@@ -68,9 +66,10 @@ Meanwhile, enterprise SaaS observability tools cost \$50,000 to \$150,000 annual
 
 </div>
 
-Tested against a 10M-record transactional dataset on Databricks Runtime 15.4 LTS (4x worker nodes):
+> [!NOTE]
+> The production scenarios below are illustrative of cluster improvements observed across 10M-record transactional pipelines on Databricks Runtime 15.4 LTS.
 
-| Production Scenario | Default Databricks Anti-Pattern | dlt-doctor Refactored | Measured Outcome |
+| Production Scenario | Default Databricks Anti-Pattern | dlt-doctor Refactored | Illustrative Outcome |
 | :--- | :--- | :--- | :--- |
 | **Late Partition Backfill** | Full 365-day reload (2.4 TB scan) | Bounded 7-day partition-pruned `MERGE` | **98.1% I/O scan reduction** |
 | **Row Transformation** | Python `@udf` on socket IPC | Native `F.when` / Arrow `@pandas_udf` | **15.4x compute acceleration** |
@@ -79,31 +78,54 @@ Tested against a 10M-record transactional dataset on Databricks Runtime 15.4 LTS
 | **DLT Rule Enforcement** | `expect_or_drop` silent deletion | Resilient dual-routing quarantine stream | **0 records lost (100% auditability)** |
 | **Streaming CDC Merges** | `DeltaAnalysisException` crash | In-batch window `row_number()` deduplication | **Zero merge crashes (deterministic)** |
 
----
+### Static Analyzer Throughput (Locally Measured)
 
-## Architecture
+Measured via `python benchmarks/run_benchmarks.py` with zero JVM cluster overhead:
 
-<div align="center">
-
-<img src="./assets/dlt-doctor-architecture.svg" alt="dlt-doctor end-to-end architecture" width="100%" />
-
-</div>
-
----
-
-## Why dlt-doctor vs The \$100k SaaS Stack
-
-Commercial observability tools (Monte Carlo, Anomalo, Unravel Data, Acceldata) charge enterprise subscriptions to poll metrics post-run. `dlt-doctor` shifts left: it fixes the code, isolates bad records, and scripts partition-pruned restatements before compute runs.
-
-| Architectural Dimension | Commercial SaaS (Monte Carlo / Anomalo) | APM Profilers (Unravel / Acceldata) | dlt-doctor |
+| Benchmark Task | Workload Scale | Measured Latency | Throughput |
 | :--- | :--- | :--- | :--- |
-| **Cluster Cost** | Burns DBUs running continuous full-table scan queries | Requires persistent daemon telemetry agents | **Zero cluster cost** (runs via local AST in <50ms) |
-| **Actionability** | Read-only alert notifications (Slack / PagerDuty) | Metric utilization graphs without code generation | **Automated code synthesis** (PySpark rewrites, MERGE SQL) |
-| **Code Inspection** | None; treats pipeline code as an opaque black box | High-level JVM metrics only | **Deep Catalyst AST analysis** (UDFs, plan bloat, spills) |
-| **DLT Integration** | None; unaware of Delta Live Tables decorators | None; treats DLT as generic streaming jobs | **Dual-routing quarantine** (`@expect_or_quarantine`) |
-| **CDC Micro-Batches** | Alerts after duplicate records land | None | **Pre-merge window deduplication** |
-| **Late Data Backfills** | Alerts on data lag without math | None | **Bounded blast-radius partition calculation** |
-| **Licensing & Footprint** | \$30k–\$150k/year enterprise contracts; VPC peering | Multi-tenant SaaS or complex daemon setup | **100% Free & Open Source (Apache 2.0)**; single pip install |
+| **Catalyst AST Audit** | 50 pipeline functions (250+ lines) | 3.1 ms | **~80,000 lines/sec** |
+| **Single-Pass Auto-Heal** | 10 DLT expectation tables | 4.2 ms | **Sub-5ms code synthesis** |
+| **Multi-File Directory Scan** | 25 pipeline source files | 35.9 ms | **~700 files/sec** |
+
+---
+
+## Where dlt-doctor Fits
+
+| Architectural Dimension | Native Lakeflow / DLT | DQX / Great Expectations | Commercial SaaS (Monte Carlo / Anomalo) | dlt-doctor |
+| :--- | :--- | :--- | :--- | :--- |
+| **Cluster Cost** | Standard DLT compute | Executes assertions inside Spark tasks | Burns DBUs querying live tables post-run | **Zero cluster cost** (runs offline via AST in <5ms) |
+| **Data Loss Prevention** | `expect_or_drop` purges rows without persisting payloads | Fails micro-batch or drops rows | Read-only alerting after corruption lands | **Single-pass NULL-safe quarantine routing** |
+| **Actionability** | Log metrics to event log | Assertion logs | Slack / PagerDuty alert notifications | **Automated diff synthesis (`--auto-heal`)** |
+| **Code Inspection** | None (runtime engine) | Runtime dataframe assertions | Black-box table polling | **Deep AST inspection (UDFs, cascades, spills)** |
+| **Late Data Backfills** | Full pipeline refresh | None | Alerts on freshness lag | **Partition blast-radius restatement SQL** |
+| **Licensing** | Databricks runtime license | Open Source library | \$30k–\$150k/year enterprise contract | **100% Free & Open Source (Apache 2.0)** |
+
+---
+
+## Diagnostic Rules
+
+All diagnostic rules are managed in `dlt_doctor.rules` and queryable via `dlt-doctor rules` and `dlt-doctor explain <RULE_ID>`:
+
+| Rule ID | Severity | Name | Description |
+| :--- | :--- | :--- | :--- |
+| `DD001` | `MEDIUM` | Silent data loss from expect_or_drop policy | `expect_or_drop` silently drops non-compliant records from target tables. Dropped rows' contents are not persisted anywhere in the pipeline (only aggregate counts are logged). Use dual-stream quarantine routing to preserve invalid records. |
+| `DD002` | `HIGH` | Quarantine filter is not NULL-safe complement | Quarantine filter does not handle SQL three-valued logic (NULL) for referenced columns. When a condition evaluates to NULL, both target and quarantine filters discard the row. |
+| `DD003` | `INFO` | Dynamic expectation dictionary cannot be statically verified | Expectations are defined dynamically via runtime variables or external sources. Static analysis cannot resolve the expectation conditions. |
+| `PLAN-001` | `CRITICAL` | Catalyst CartesianProduct operator in execution plan | Physical plan contains CartesianProduct operator without join condition. |
+| `PLAN-002` | `MEDIUM` | SortMergeJoin utilized without Broadcast hints | SortMergeJoin executed where BroadcastExchange was feasible on smaller tables. |
+| `PLAN-003` | `HIGH` | BatchEvalPython operator detected in physical plan | Catalyst is shipping rows across socket to Python worker daemon. |
+| `PLAN-004` | `HIGH` | Empty PartitionFilters on partitioned table scan | Query scans partitioned table without partition pruning predicates. |
+| `PYSPARK-001` | `CRITICAL` | Python UDF serialization overhead | Row-by-row JVM-to-Python socket serialization disables Catalyst vectorization. |
+| `PYSPARK-002` | `HIGH` | Deep withColumn cascade | Chained `.withColumn()` calls create deep Project AST chains leading to compiler degradation. |
+| `PYSPARK-004` | `MEDIUM` | Repartition triggers full shuffle | Explicit `.repartition()` triggers a full round-robin shuffle across workers. |
+| `PYSPARK-005` | `HIGH` | Multiple action calls without DataFrame caching | Multiple actions on unpersisted DataFrame recompute upstream lineage from source. |
+| `PYSPARK-006` | `CRITICAL` | Explicit Cartesian crossJoin | `crossJoin` produces M * N record multiplication, risking executor OOM and spill. |
+| `SYNTAX-001` | `CRITICAL` | Source syntax error | Source file fails language parser validation. |
+| `UC-001` | `HIGH` | Legacy DBFS root mount path detected | Code references deprecated `/mnt/` or `dbfs:/` paths not secured by Unity Catalog. |
+| `UC-002` | `MEDIUM` | Legacy two-tier Hive Metastore table reference | Table references lack 3-level catalog namespace (`catalog.schema.table`). |
+| `UC-003` | `HIGH` | Hardcoded workspace local file path | Direct local filesystem references (`/tmp`, `/local`) will fail across distributed workers. |
+| `UC-004` | `HIGH` | Legacy DBFS mount API call detected | `dbutils.fs.mount()` is deprecated in Unity Catalog workspaces. |
 
 ---
 
@@ -153,18 +175,27 @@ jobs:
 ### 3. Essential CLI Commands
 
 ```bash
-# Statically audit a single pipeline script or Databricks notebook (.ipynb)
+# Statically audit a pipeline script, SQL file, notebook (.ipynb), or directory
 dlt-doctor analyze src/pipelines/orders_silver.py
 dlt-doctor analyze notebooks/01_ingest.ipynb
+dlt-doctor analyze src/pipelines/orders.sql
+dlt-doctor analyze src/pipelines --format markdown
 
-# Recursively scan an entire Lakehouse repository directory
-dlt-doctor analyze src/pipelines --recursive
+# Auto-heal expect_or_drop anti-patterns into single-pass quarantine streams
+dlt-doctor heal src/pipelines/orders_silver.py
+
+# List and explain diagnostic rules
+dlt-doctor rules
+dlt-doctor explain DD001
 
 # Calculate late-arriving partition blast radius and emit pruned MERGE SQL
 dlt-doctor restate --table main.gold.orders --late-date 2026-10-25 --window 7
 
 # Generate streaming CDC deduplication and SCD merge templates
 dlt-doctor cdc --table main.silver.customers --keys customer_id --event-time updated_at
+
+# Generate idempotent replay SQL to reprocess quarantined records
+dlt-doctor replay --quarantine-table main.silver.orders_quarantine --target-table main.silver.orders --keys order_id
 
 # Audit legacy DBFS mounts and two-tier Hive Metastore references for Unity Catalog
 dlt-doctor uc-migrate src/pipelines/orders.py --catalog prod_lakehouse --schema bronze
@@ -242,7 +273,7 @@ Replace destructive `expect_or_drop` and prevent streaming CDC multiple-match me
 import dlt
 from dlt_doctor import ExpectationDoctor, ExpectationRule, CdcDoctor
 
-# 1. Dual-Routing Quarantine (Valid -> Gold, Invalid -> Quarantine Table)
+# 1. Single-Pass NULL-Safe Quarantine (Valid -> Gold, Invalid -> Quarantine Table)
 exp_doctor = ExpectationDoctor()
 rules = [
     ExpectationRule("valid_id", "order_id IS NOT NULL"),
@@ -250,19 +281,9 @@ rules = [
 ]
 plan = exp_doctor.build_quarantine_routing("silver_orders", rules)
 
-
-@dlt.table(name=plan.target_clean_table)
-def silver_orders():
-    return dlt.read_stream("bronze_orders").filter(plan.valid_filter_sql)
-
-
-@dlt.table(name=plan.target_quarantine_table)
-def silver_orders_quarantine():
-    return (
-        dlt.read_stream("bronze_orders")
-        .filter(plan.invalid_filter_sql)
-        .withColumn("_quarantined_at", F.current_timestamp())
-    )
+# Synthesizes complete single-pass pipeline code with failed rules tracking
+pipeline_code = plan.generate_pipeline_code(source_table="bronze_orders", flavor="dp")
+print(pipeline_code)
 
 
 # 2. Streaming CDC Micro-Batch Window Deduplication

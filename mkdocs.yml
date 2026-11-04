@@ -57,6 +57,8 @@ nav:
   - Diagnostic Engines:
       - Catalyst AST Optimizer: engines/catalyst.md
       - Zero-Loss Quarantine: engines/expectations.md
+      - Quarantine Governance: engines/quarantine_governance.md
+      - Quarantine Replay: engines/replay.md
       - Late Data Restatement: engines/restatement.md
       - Streaming CDC Deduplication: engines/cdc.md
       - Unity Catalog Migration: engines/uc.md
@@ -70,3 +72,4 @@ nav:
   - Articles & Deep Dives:
       - Zero-Loss DLT Quarantine: articles/zero_loss_quarantine.md
   - GitHub Action: github-action.md
+  - Limitations: limitations.md
