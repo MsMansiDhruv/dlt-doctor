@@ -46,6 +46,7 @@ class StreamHealthSummary:
     input_rate_avg: float
     process_rate_avg: float
     total_input_rows: int
+    estimated_backlog_rows: int = 0
     findings: list[DiagnosticFinding] = field(default_factory=list)
 
 
@@ -111,9 +112,12 @@ class AutoLoaderDoctor:
         return findings
 
     def diagnose_stream_progress(
-        self, progress_batches: list[dict[str, Any]]
+        self, progress_batches: list[dict[str, Any]] | dict[str, Any]
     ) -> StreamHealthSummary:
         """Inspect recent micro-batch progress metrics from query.recentProgress."""
+        if isinstance(progress_batches, dict):
+            progress_batches = [progress_batches]
+
         if not progress_batches:
             return StreamHealthSummary(
                 is_healthy=True,
@@ -142,8 +146,10 @@ class AutoLoaderDoctor:
         avg_proc = sum(process_rates) / len(process_rates) if process_rates else 0.0
 
         is_backpressured = False
+        estimated_backlog = 0
         if avg_in > (avg_proc * 1.5) and avg_in > 100.0:
             is_backpressured = True
+            estimated_backlog = int((avg_in - avg_proc) * 60)
             findings.append(
                 DiagnosticFinding(
                     rule_id="AUTOLOADER-004",
@@ -166,5 +172,6 @@ class AutoLoaderDoctor:
             input_rate_avg=round(avg_in, 2),
             process_rate_avg=round(avg_proc, 2),
             total_input_rows=total_rows,
+            estimated_backlog_rows=estimated_backlog,
             findings=findings,
         )

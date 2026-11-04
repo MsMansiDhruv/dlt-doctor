@@ -27,4 +27,4 @@ All benchmarks were measured against a 10M-record transactional dataset on Datab
 | **DLT Integration** | None; unaware of Delta Live Tables decorators | None; treats DLT as generic streaming jobs | **Dual-routing quarantine** (`@expect_or_quarantine`) |
 | **CDC Micro-Batches** | Alerts after duplicate records land | None | **Pre-merge window deduplication** |
 | **Late Data Backfills** | Alerts on data lag without math | None | **Bounded blast-radius partition calculation** |
-| **Licensing & Footprint** | \$30k–\$150k/year enterprise contracts; VPC peering | Multi-tenant SaaS or complex daemon setup | **100% Free & Open Source (Apache 2.0)**; single pip install |
+| **Licensing & Footprint** | Commercial proprietary license; VPC peering | Multi-tenant SaaS or complex daemon setup | **100% Free & Open Source (Apache 2.0)**; single pip install |

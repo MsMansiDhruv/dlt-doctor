@@ -12,7 +12,7 @@
 [![Storage](https://img.shields.io/badge/Storage-Delta%20Lake%20%26%20CDF-2EE6A7?style=for-the-badge&logo=delta&logoColor=white)](https://delta.io/)
 [![Governance](https://img.shields.io/badge/Governance-Unity%20Catalog-0E1726?style=for-the-badge&logo=databricks&logoColor=2EE6A7)](https://www.databricks.com/product/unity-catalog)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
-[![CI Tests](https://img.shields.io/badge/CI-99%20Tests%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
+[![CI](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml)
 
 <p align="center">
   <a href="https://msmansidhruv.github.io/dlt-doctor/">Documentation</a> •
@@ -37,7 +37,7 @@ It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot
 
 `dlt-doctor` is the antidote:
 - **Zero cluster spend**: Statically audits your PySpark AST and configurations locally or inside CI before code merges.
-- **Zero silent data loss**: Intercepts destructive `expect_or_drop` policies and synthesizes complete, disjoint, three-valued-logic NULL-safe single-pass quarantine streams via `--auto-heal`.
+- **Zero silent data loss**: Intercepts destructive `expect_or_drop` policies and synthesizes complete, disjoint, three-valued-logic NULL-safe single-pass quarantine streams via `dlt-doctor heal`.
 - **Surgical healing**: Calculates bounded late-data partition blast radii to restate historical rolling windows without full-table scans.
 
 ---
@@ -62,12 +62,12 @@ It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot
 
 <div align="center">
 
-<img src="./assets/dlt-doctor-benchmarks.svg" alt="dlt-doctor measured production benchmarks" width="100%" />
+<img src="./assets/dlt-doctor-benchmarks.svg" alt="dlt-doctor illustrative reference benchmarks" width="100%" />
 
 </div>
 
 > [!NOTE]
-> The production scenarios below are illustrative of cluster improvements observed across 10M-record transactional pipelines on Databricks Runtime 15.4 LTS.
+> The production scenarios below are illustrative reference benchmarks of potential cluster improvements across 10M-record transactional pipelines on Databricks Runtime 15.4 LTS.
 
 | Production Scenario | Default Databricks Anti-Pattern | dlt-doctor Refactored | Illustrative Outcome |
 | :--- | :--- | :--- | :--- |
@@ -85,7 +85,7 @@ Measured via `python benchmarks/run_benchmarks.py` with zero JVM cluster overhea
 | Benchmark Task | Workload Scale | Measured Latency | Throughput |
 | :--- | :--- | :--- | :--- |
 | **Catalyst AST Audit** | 50 pipeline functions (250+ lines) | 3.1 ms | **~80,000 lines/sec** |
-| **Single-Pass Auto-Heal** | 10 DLT expectation tables | 4.2 ms | **Sub-5ms code synthesis** |
+| **Single-Pass Heal** | 10 DLT expectation tables | 4.2 ms | **Sub-5ms code synthesis** |
 | **Multi-File Directory Scan** | 25 pipeline source files | 35.9 ms | **~700 files/sec** |
 
 ---
@@ -95,37 +95,43 @@ Measured via `python benchmarks/run_benchmarks.py` with zero JVM cluster overhea
 | Architectural Dimension | Native Lakeflow / DLT | DQX / Great Expectations | Commercial SaaS (Monte Carlo / Anomalo) | dlt-doctor |
 | :--- | :--- | :--- | :--- | :--- |
 | **Cluster Cost** | Standard DLT compute | Executes assertions inside Spark tasks | Burns DBUs querying live tables post-run | **Zero cluster cost** (runs offline via AST in <5ms) |
-| **Data Loss Prevention** | `expect_or_drop` purges rows without persisting payloads | Fails micro-batch or drops rows | Read-only alerting after corruption lands | **Single-pass NULL-safe quarantine routing** |
-| **Actionability** | Log metrics to event log | Assertion logs | Slack / PagerDuty alert notifications | **Automated diff synthesis (`--auto-heal`)** |
+| **Data Loss Prevention** | `expect_or_drop` purges rows without persisting payloads | Supports quarantine routing in DQX (runtime compute); GE typically halts or warns | Read-only alerting after corruption lands | **Single-pass NULL-safe quarantine routing** |
+| **Actionability** | Log metrics to event log | Assertion logs | Slack / PagerDuty alert notifications | **Automated code synthesis (`dlt-doctor heal`)** |
 | **Code Inspection** | None (runtime engine) | Runtime dataframe assertions | Black-box table polling | **Deep AST inspection (UDFs, cascades, spills)** |
 | **Late Data Backfills** | Full pipeline refresh | None | Alerts on freshness lag | **Partition blast-radius restatement SQL** |
-| **Licensing** | Databricks runtime license | Open Source library | \$30k–\$150k/year enterprise contract | **100% Free & Open Source (Apache 2.0)** |
+| **Licensing** | Databricks runtime license | Open Source library | Commercial proprietary license | **100% Free & Open Source (Apache 2.0)** |
 
 ---
 
 ## Diagnostic Rules
 
-All diagnostic rules are managed in `dlt_doctor.rules` and queryable via `dlt-doctor rules` and `dlt-doctor explain <RULE_ID>`:
+All diagnostic rules are managed in `dlt_doctor.rules` and queryable via `dlt-doctor rules` and `dlt-doctor explain <RULE_ID>`.
 
-| Rule ID | Severity | Name | Description |
-| :--- | :--- | :--- | :--- |
-| `DD001` | `MEDIUM` | Silent data loss from expect_or_drop policy | `expect_or_drop` silently drops non-compliant records from target tables. Dropped rows' contents are not persisted anywhere in the pipeline (only aggregate counts are logged). Use dual-stream quarantine routing to preserve invalid records. |
-| `DD002` | `HIGH` | Quarantine filter is not NULL-safe complement | Quarantine filter does not handle SQL three-valued logic (NULL) for referenced columns. When a condition evaluates to NULL, both target and quarantine filters discard the row. |
-| `DD003` | `INFO` | Dynamic expectation dictionary cannot be statically verified | Expectations are defined dynamically via runtime variables or external sources. Static analysis cannot resolve the expectation conditions. |
-| `PLAN-001` | `CRITICAL` | Catalyst CartesianProduct operator in execution plan | Physical plan contains CartesianProduct operator without join condition. |
-| `PLAN-002` | `MEDIUM` | SortMergeJoin utilized without Broadcast hints | SortMergeJoin executed where BroadcastExchange was feasible on smaller tables. |
-| `PLAN-003` | `HIGH` | BatchEvalPython operator detected in physical plan | Catalyst is shipping rows across socket to Python worker daemon. |
-| `PLAN-004` | `HIGH` | Empty PartitionFilters on partitioned table scan | Query scans partitioned table without partition pruning predicates. |
-| `PYSPARK-001` | `CRITICAL` | Python UDF serialization overhead | Row-by-row JVM-to-Python socket serialization disables Catalyst vectorization. |
-| `PYSPARK-002` | `HIGH` | Deep withColumn cascade | Chained `.withColumn()` calls create deep Project AST chains leading to compiler degradation. |
-| `PYSPARK-004` | `MEDIUM` | Repartition triggers full shuffle | Explicit `.repartition()` triggers a full round-robin shuffle across workers. |
-| `PYSPARK-005` | `HIGH` | Multiple action calls without DataFrame caching | Multiple actions on unpersisted DataFrame recompute upstream lineage from source. |
-| `PYSPARK-006` | `CRITICAL` | Explicit Cartesian crossJoin | `crossJoin` produces M * N record multiplication, risking executor OOM and spill. |
-| `SYNTAX-001` | `CRITICAL` | Source syntax error | Source file fails language parser validation. |
-| `UC-001` | `HIGH` | Legacy DBFS root mount path detected | Code references deprecated `/mnt/` or `dbfs:/` paths not secured by Unity Catalog. |
-| `UC-002` | `MEDIUM` | Legacy two-tier Hive Metastore table reference | Table references lack 3-level catalog namespace (`catalog.schema.table`). |
-| `UC-003` | `HIGH` | Hardcoded workspace local file path | Direct local filesystem references (`/tmp`, `/local`) will fail across distributed workers. |
-| `UC-004` | `HIGH` | Legacy DBFS mount API call detected | `dbutils.fs.mount()` is deprecated in Unity Catalog workspaces. |
+> [!NOTE]
+> Rules evaluated by `dlt-doctor analyze`: `DD001`, `DD002`, `DD003`, `DD004`, `PYSPARK-001`, `PYSPARK-002`, `PYSPARK-004`, `PYSPARK-005`, `PYSPARK-006`, and `SYNTAX-001`.
+> `PLAN-001` through `PLAN-004` are evaluated by `PlanDoctor.analyze_explain_plan()` on query explain outputs (not run by CLI `analyze`).
+> `UC-001` through `UC-004` are evaluated by `dlt-doctor uc-migrate` (not run by CLI `analyze`).
+
+| Rule ID | Evaluated By | Severity | Name | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `DD001` | `analyze` | `MEDIUM` | Silent data loss from expect_or_drop policy | `expect_or_drop` silently drops non-compliant records from target tables. Dropped rows' contents are not persisted anywhere in the pipeline (only aggregate counts are logged). Use dual-stream quarantine routing to preserve invalid records. |
+| `DD002` | `analyze` | `HIGH` | Quarantine filter is not NULL-safe complement | Quarantine filter does not handle SQL three-valued logic (NULL) for referenced columns. When a condition evaluates to NULL, both target and quarantine filters discard the row. |
+| `DD003` | `analyze` | `INFO` | Dynamic expectation dictionary cannot be statically verified | Expectations are defined dynamically via runtime variables or external sources. Static analysis cannot resolve the expectation conditions. |
+| `DD004` | `analyze` | `HIGH` | Non-deterministic function in expectation condition | Expectation condition uses non-deterministic functions (such as current_timestamp, rand, uuid). Non-deterministic expectations produce inconsistent validation results across streaming micro-batches. |
+| `PYSPARK-001` | `analyze` | `CRITICAL` | Python UDF serialization overhead | Row-by-row JVM-to-Python socket serialization disables Catalyst vectorization. |
+| `PYSPARK-002` | `analyze` | `HIGH` | Deep withColumn cascade | Chained `.withColumn()` calls create deep Project AST chains leading to compiler degradation. |
+| `PYSPARK-004` | `analyze` | `MEDIUM` | Repartition triggers full shuffle | Explicit `.repartition()` triggers a full round-robin shuffle across workers. |
+| `PYSPARK-005` | `analyze` | `HIGH` | Multiple action calls without DataFrame caching | Multiple actions on unpersisted DataFrame recompute upstream lineage from source. |
+| `PYSPARK-006` | `analyze` | `CRITICAL` | Explicit Cartesian crossJoin | `crossJoin` produces M * N record multiplication, risking executor OOM and spill. |
+| `SYNTAX-001` | `analyze` | `CRITICAL` | Source syntax error | Source file fails language parser validation. |
+| `PLAN-001` | `explain_plan` | `CRITICAL` | Catalyst CartesianProduct operator in execution plan | Physical plan contains CartesianProduct operator without join condition. |
+| `PLAN-002` | `explain_plan` | `MEDIUM` | SortMergeJoin utilized without Broadcast hints | SortMergeJoin executed where BroadcastExchange was feasible on smaller tables. |
+| `PLAN-003` | `explain_plan` | `HIGH` | BatchEvalPython operator detected in physical plan | Catalyst is shipping rows across socket to Python worker daemon. |
+| `PLAN-004` | `explain_plan` | `HIGH` | Empty PartitionFilters on partitioned table scan | Query scans partitioned table without partition pruning predicates. |
+| `UC-001` | `uc-migrate` | `HIGH` | Legacy DBFS root mount path detected | Code references deprecated `/mnt/` or `dbfs:/` paths not secured by Unity Catalog. |
+| `UC-002` | `uc-migrate` | `MEDIUM` | Legacy two-tier Hive Metastore table reference | Table references lack 3-level catalog namespace (`catalog.schema.table`). |
+| `UC-003` | `uc-migrate` | `HIGH` | Hardcoded workspace local file path | Direct local filesystem references (`/tmp`, `/local`) will fail across distributed workers. |
+| `UC-004` | `uc-migrate` | `HIGH` | Legacy DBFS mount API call detected | `dbutils.fs.mount()` is deprecated in Unity Catalog workspaces. |
 
 ---
 
@@ -249,8 +255,9 @@ df_clean = (
 """)
 
 report = AdvisorDoctor().compile_report("orders_etl", findings)
-# Render scorecard directly inside a Databricks notebook cell
-displayHTML(AdvisorDoctor().to_databricks_html(report))
+# Render scorecard directly inside a Databricks notebook cell or export HTML
+scorecard_html = AdvisorDoctor().to_databricks_html(report)
+# displayHTML(scorecard_html)
 
 # 2. Audit Auto Loader ingestion stream progress for backpressure
 al_doctor = AutoLoaderDoctor()
@@ -270,10 +277,9 @@ if al_health.is_backpressured:
 Replace destructive `expect_or_drop` and prevent streaming CDC multiple-match merge failures:
 
 ```python
-import dlt
 from dlt_doctor import ExpectationDoctor, ExpectationRule, CdcDoctor
 
-# 1. Single-Pass NULL-Safe Quarantine (Valid -> Gold, Invalid -> Quarantine Table)
+# 1. Single-Pass NULL-Safe Quarantine (Valid -> Clean, Invalid -> Quarantine Table)
 exp_doctor = ExpectationDoctor()
 rules = [
     ExpectationRule("valid_id", "order_id IS NOT NULL"),
@@ -282,7 +288,7 @@ rules = [
 plan = exp_doctor.build_quarantine_routing("silver_orders", rules)
 
 # Synthesizes complete single-pass pipeline code with failed rules tracking
-pipeline_code = plan.generate_pipeline_code(source_table="bronze_orders", flavor="dp")
+pipeline_code = exp_doctor.generate_pipeline_code(plan, source_table="bronze_orders", flavor="dp")
 print(pipeline_code)
 
 

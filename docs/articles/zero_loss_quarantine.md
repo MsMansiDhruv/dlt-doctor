@@ -133,12 +133,12 @@ $ dlt-doctor analyze pipelines/transactions.py
 [HIGH] ExpectationDoctor: Function 'silver_transactions' uses expect_or_drop.
        Risk of unrecoverable data loss in regulated pipelines.
        Rule: 'valid_amount' -> ('amount > 0')
-       Recommendation: Run 'dlt-doctor auto-heal pipelines/transactions.py' to generate dual-stream quarantine.
+       Recommendation: Run 'dlt-doctor heal pipelines/transactions.py' to generate dual-stream quarantine.
 ```
 
 ### Automated Code Generation (Auto-Heal)
 
-Running `--auto-heal` inspects the AST expression and synthesizes the corresponding quarantine table definition automatically, preserving original source formatting while injecting the companion table.
+Running `dlt-doctor heal` inspects the AST expression and synthesizes the corresponding quarantine table definition automatically, preserving original source formatting while injecting the companion table.
 
 ---
 

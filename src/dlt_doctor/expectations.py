@@ -82,6 +82,14 @@ class QuarantineRoutingPlan:
             "rules": [r.to_dict() for r in self.rules],
         }
 
+    def generate_pipeline_code(
+        self, source_table: str = "source_bronze", flavor: str = "dp"
+    ) -> str:
+        """Convenience method to synthesize pipeline code directly from routing plan."""
+        return ExpectationDoctor().generate_pipeline_code(
+            self, source_table=source_table, flavor=flavor
+        )
+
 
 class ExpectationDoctor:
     """Manages resilient quality gates without silent data drops or pipeline halts."""

@@ -8,7 +8,7 @@
 | :--- | :--- | :--- |
 | **Catalyst AST Inspection** | Yes (Python AST, SQL parsing) | No |
 | **Anti-Pattern Detection** (`PYSPARK-001..006`) | Yes | No |
-| **Quarantine Synthesis** (`--auto-heal`) | Yes | No |
+| **Quarantine Synthesis** (`heal`) | Yes | No |
 | **Unity Catalog Migration Audit** (`UC-001..004`) | Yes | No |
 | **Runtime Data Skew Measurement** | No | Yes (Spark execution metrics) |
 | **Physical Plan Explain Inspection** | Yes (when explain output is supplied) | Yes (to run `df.explain()`) |
@@ -29,7 +29,7 @@ rules_dict = load_rules_from_catalog("orders")
 def orders(): ...
 ```
 
-When an unresolvable dynamic expression is encountered, `dlt-doctor` emits `DD003` (INFO) and refuses `--auto-heal` to prevent invalid code generation.
+When an unresolvable dynamic expression is encountered, `dlt-doctor` emits `DD003` (INFO) and refuses `heal` to prevent invalid code generation.
 
 ## SQL Dialect Handling
 
