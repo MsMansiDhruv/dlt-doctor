@@ -202,7 +202,7 @@ def test_reproduce_cdc_scd2_placeholder_invalid_sql():
 def test_reproduce_restate_missing_delete_unmatched():
     """Bug: restate SQL lacks WHEN NOT MATCHED BY SOURCE ... THEN DELETE."""
     reconciler = RestatementDoctor()
-    scope = reconciler.calculate_blast_radius("silver_orders", "2026-11-01", 7)
+    scope = reconciler.calculate_blast_radius("silver_orders", "2026-11-01", 7, delete_unmatched=True)
     assert "WHEN NOT MATCHED BY SOURCE" in scope.delta_merge_sql, (
         f"Restatement SQL missing WHEN NOT MATCHED BY SOURCE: {scope.delta_merge_sql}"
     )

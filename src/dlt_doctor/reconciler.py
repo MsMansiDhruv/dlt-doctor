@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,9 +53,12 @@ class RestatementDoctor:
         partition_col: str = "order_date",
         match_key: str = "id",
         source_table: str = "source_recalculated",
-        delete_unmatched: bool = True,
+        delete_unmatched: bool = False,
     ) -> BlastRadiusScope:
         """Calculate the exact affected partition window [t_late, t_late + W - 1]."""
+        if window_size_days < 1:
+            raise ValueError(f"window_size_days must be at least 1, got {window_size_days}.")
+
         clean_target = _validate_identifier(target_table)
         clean_source = _validate_identifier(source_table)
         clean_part = _validate_identifier(partition_col)
@@ -70,6 +74,13 @@ class RestatementDoctor:
 
         delete_clause = ""
         if delete_unmatched:
+            warnings.warn(
+                "delete_unmatched is enabled: this will permanently DELETE records in target within the "
+                "partition window that are missing from source. Ensure source represents a complete, "
+                "authoritative replacement for the partition range.",
+                category=UserWarning,
+                stacklevel=2,
+            )
             delete_clause = f" WHEN NOT MATCHED BY SOURCE AND target.{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}' THEN DELETE"
 
         merge_sql = (
@@ -79,7 +90,7 @@ class RestatementDoctor:
             f"AND target.{clean_key} = source.{clean_key} "
             f"AND target.{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}' "
             f"WHEN MATCHED THEN UPDATE SET * "
-            f"WHEN NOT MATCHED THEN INSERT *{delete_clause};"
+            f"WHEN NOT MATCHED AND source.{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}' THEN INSERT *{delete_clause};"
         )
 
         return BlastRadiusScope(

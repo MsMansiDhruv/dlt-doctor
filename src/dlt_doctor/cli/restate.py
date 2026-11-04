@@ -16,16 +16,16 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--match-key", default="id", help="Primary match key column (default: id)")
     p.add_argument("--source", default="source_recalculated", help="Source staging table (default: source_recalculated)")
     p.add_argument(
-        "--no-delete-unmatched",
+        "--delete-unmatched",
         action="store_true",
         default=False,
-        help="Disable WHEN NOT MATCHED BY SOURCE ... THEN DELETE clause",
+        help="Enable WHEN NOT MATCHED BY SOURCE ... THEN DELETE (WARNING: permanently deletes unmatched target rows in window)",
     )
 
 
 def handle(args: argparse.Namespace) -> int:
     reconciler = RestatementDoctor()
-    delete_unmatched = not args.no_delete_unmatched
+    delete_unmatched = args.delete_unmatched
 
     try:
         scope = reconciler.calculate_blast_radius(
