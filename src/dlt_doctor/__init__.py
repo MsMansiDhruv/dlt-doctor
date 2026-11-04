@@ -1,5 +1,10 @@
 """dlt-doctor: Production optimization engine for Databricks DLT, Auto Loader, and PySpark."""
 
+from __future__ import annotations
+
+import sys
+from typing import Any
+
 from dlt_doctor.advisor import AdvisorDoctor, PipelineAuditReport
 from dlt_doctor.autoloader import (
     AutoLoaderConfig,
@@ -23,7 +28,6 @@ from dlt_doctor.cluster import (
     LiquidClusterRecommendation,
 )
 from dlt_doctor.compaction import CompactionDebtReport, CompactionDoctor
-from dlt_doctor.connect import TableInspectionReport, WorkspaceInspector
 from dlt_doctor.cost import (
     ClusterSizingProfile,
     CostDoctor,
@@ -34,8 +38,8 @@ from dlt_doctor.expectations import (
     ExpectationRule,
     QuarantineRoutingPlan,
 )
+from dlt_doctor.heal import HealResult, auto_heal_source, heal_file
 from dlt_doctor.history import HistoryDoctor, LogVelocityReport
-from dlt_doctor.magic import audit_code_cell
 from dlt_doctor.notebook import extract_notebook_code, is_notebook_file
 from dlt_doctor.reconciler import BlastRadiusScope, RestatementDoctor
 from dlt_doctor.scanner import DirectoryAuditReport, DirectoryScanner
@@ -59,16 +63,13 @@ from dlt_doctor.vacuum import (
     VacuumSafetyReport,
 )
 
-__version__ = "0.4.2"
+__version__ = "0.5.0.dev0"
 
 __all__ = [
     "DirectoryScanner",
     "DirectoryAuditReport",
     "extract_notebook_code",
     "is_notebook_file",
-    "audit_code_cell",
-    "WorkspaceInspector",
-    "TableInspectionReport",
     "PlanDoctor",
     "DiagnosticFinding",
     "DiagnosticSeverity",
@@ -78,6 +79,9 @@ __all__ = [
     "ExpectationDoctor",
     "ExpectationRule",
     "QuarantineRoutingPlan",
+    "auto_heal_source",
+    "heal_file",
+    "HealResult",
     "RestatementDoctor",
     "BlastRadiusScope",
     "SkewDoctor",
@@ -100,16 +104,38 @@ __all__ = [
     "SchemaEvolutionReport",
     "SchemaChange",
     "SchemaDriftSeverity",
+    "AdvisorDoctor",
+    "PipelineAuditReport",
     "CostDoctor",
     "DbuCostForecast",
     "ClusterSizingProfile",
     "SpillDoctor",
     "ShuffleTuningAdvice",
-    "HistoryDoctor",
-    "LogVelocityReport",
     "CheckpointDoctor",
     "CheckpointHealthReport",
     "CheckpointIntegrityStatus",
-    "AdvisorDoctor",
-    "PipelineAuditReport",
+    "HistoryDoctor",
+    "LogVelocityReport",
+    # Lazily loaded symbols
+    "load_ipython_extension",
+    "audit_code_cell",
+    "WorkspaceInspector",
+    "TableInspectionReport",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily load interactive magic and live telemetry modules on access."""
+    if name in {"load_ipython_extension", "audit_code_cell"}:
+        import dlt_doctor.magic as magic_mod
+
+        return getattr(magic_mod, name)
+    if name in {"WorkspaceInspector", "TableInspectionReport"}:
+        import dlt_doctor.connect as connect_mod
+
+        return getattr(connect_mod, name)
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+def __dir__() -> list[str]:
+    return sorted(list(globals().keys()) + __all__)
