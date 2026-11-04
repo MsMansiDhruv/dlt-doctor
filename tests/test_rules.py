@@ -126,6 +126,106 @@ def orders_quarantine():
     assert len(dd002_good) == 0
 
 
+def test_dd002_never_flags_valid_side_filters() -> None:
+    """DD002 must never flag valid-side filters."""
+    code = """
+import dlt
+
+@dlt.table
+@dlt.expect_or_drop("positive_amount", "amount > 0")
+def orders():
+    return dlt.read_stream("raw").filter("amount > 0")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd002 = [f for f in findings if f.rule_id == "DD002"]
+    assert len(dd002) == 0, f"Expected 0 DD002 on valid-side filter, got {len(dd002)}"
+
+
+def test_dd002_uses_token_matching_not_substrings() -> None:
+    """DD002 must not flag filters matching column names as substrings."""
+    code = """
+import dlt
+
+@dlt.table
+@dlt.expect_or_drop("valid_id", "id IS NOT NULL")
+def orders():
+    return dlt.read_stream("raw")
+
+@dlt.table
+def orders_quarantine():
+    return dlt.read_stream("raw").filter("valid_identifier = true")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd002 = [f for f in findings if f.rule_id == "DD002"]
+    assert len(dd002) == 0, f"Expected 0 DD002 for substring column name match, got {len(dd002)}"
+
+
+def test_dd002_recommendation_and_table_name_matching() -> None:
+    """DD002 flags filters feeding *quarantine*/*invalid*/*dlq*/*rejected* and recommends coalesce/IS NULL."""
+    code = """
+import dlt
+
+@dlt.table
+@dlt.expect_or_drop("valid_amt", "amount > 0")
+def orders():
+    return dlt.read_stream("raw")
+
+@dlt.table(name="silver_dlq")
+def dlq():
+    return dlt.read_stream("raw").filter("amount <= 0")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd002 = [f for f in findings if f.rule_id == "DD002"]
+    assert len(dd002) == 1
+    rec = dd002[0].recommendation
+    assert ("coalesce(NOT (" in rec or "OR amount IS NULL" in rec)
+
+
+def test_dd002_flags_syntactic_complement_in_unnamed_table() -> None:
+    """DD002 flags filter that is the syntactic complement of expectation even in non-quarantine named table."""
+    code = """
+import dlt
+
+@dlt.table
+@dlt.expect_or_drop("valid_amt", "amount > 0")
+def orders():
+    return dlt.read_stream("raw")
+
+@dlt.table
+def sink():
+    return dlt.read_stream("raw").filter("NOT (amount > 0)")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd002 = [f for f in findings if f.rule_id == "DD002"]
+    assert len(dd002) == 1
+    assert "amount" in dd002[0].impact_summary
+
+
+def test_dd002_ignores_quarantine_with_coalesce_null_handling() -> None:
+    """DD002 does not flag quarantine filters using coalesce."""
+    code = """
+import dlt
+
+@dlt.table
+@dlt.expect_or_drop("valid_amt", "amount > 0")
+def orders():
+    return dlt.read_stream("raw")
+
+@dlt.table
+def orders_quarantine():
+    return dlt.read_stream("raw").filter("coalesce(NOT (amount > 0), true)")
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    dd002 = [f for f in findings if f.rule_id == "DD002"]
+    assert len(dd002) == 0
+
+
+
 def test_dd003_static_vs_dynamic_expectations() -> None:
     # Statically resolvable module dictionary -> no DD003
     code_static = """

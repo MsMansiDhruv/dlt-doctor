@@ -6,6 +6,8 @@ import ast
 import re
 
 import sqlglot
+from sqlglot.expressions import Expr
+from sqlglot.optimizer.simplify import simplify
 
 from dlt_doctor.catalyst import DiagnosticFinding, DiagnosticSeverity
 from dlt_doctor.config import DoctorConfig
@@ -21,7 +23,8 @@ class ExpectationAstVisitor(ast.NodeVisitor):
         self.module_dicts: dict[str, dict[str, str]] = {}
         self.source_lines = source_code.splitlines()
         self.all_expectation_conditions: list[tuple[str, str]] = []
-        self.filter_calls: list[ast.Call] = []
+        self.filter_calls: list[tuple[ast.Call, str]] = []
+        self.current_table_name: str = ""
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """Track module-level constant dictionary assignments."""
@@ -115,12 +118,15 @@ class ExpectationAstVisitor(ast.NodeVisitor):
         if expectation_conditions:
             self.all_expectation_conditions.extend(expectation_conditions)
 
+        prev_table = self.current_table_name
+        self.current_table_name = table_name
         self.generic_visit(node)
+        self.current_table_name = prev_table
 
     def visit_Call(self, node: ast.Call) -> None:
         """Collect filter calls across the module."""
         if isinstance(node.func, ast.Attribute) and node.func.attr in {"filter", "where"}:
-            self.filter_calls.append(node)
+            self.filter_calls.append((node, self.current_table_name))
         self.generic_visit(node)
 
     def finalize(self) -> None:
@@ -198,7 +204,9 @@ class ExpectationAstVisitor(ast.NodeVisitor):
 
     def _audit_quarantine_filters_global(self) -> None:
         """Audit filter calls across the module for hand-written quarantine filters failing NULL safety (DD002)."""
-        referenced_cols: dict[str, set[str]] = {}
+        parsed_exps: list[tuple[str, str, Expr, set[str]]] = []
+        all_cols: set[str] = set()
+
         for r_name, cond in self.all_expectation_conditions:
             try:
                 parsed = sqlglot.parse_one(cond, read="spark")
@@ -208,54 +216,116 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                     if c.name
                 }
                 if cols:
-                    referenced_cols[r_name] = cols
+                    parsed_exps.append((r_name, cond, parsed, cols))
+                    all_cols.update(cols)
             except sqlglot.errors.SqlglotError:
                 continue
-
-        all_cols: set[str] = set()
-        for cols in referenced_cols.values():
-            all_cols.update(cols)
 
         if not all_cols:
             return
 
-        for child in self.filter_calls:
-            if child.args:
-                arg = child.args[0]
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                    filter_sql = arg.value
-                    lowered_filter = filter_sql.lower()
+        quarantine_pattern = re.compile(r"quarantine|invalid|dlq|rejected", re.IGNORECASE)
 
-                    for col_name in all_cols:
-                        if col_name in lowered_filter:
-                            has_null_handling = (
-                                f"{col_name} is null" in lowered_filter
-                                or "coalesce" in lowered_filter
-                                or "isnull" in lowered_filter
-                                or "is_null" in lowered_filter
-                            )
-                            if not has_null_handling:
-                                sev = self.config.get_severity("DD002", DiagnosticSeverity.HIGH)
-                                self.findings.append(
-                                    DiagnosticFinding(
-                                        rule_id="DD002",
-                                        severity=sev,
-                                        title="Quarantine filter is not NULL-safe complement",
-                                        impact_summary=(
-                                            f"Filter condition '{filter_sql}' does not handle NULL for column '{col_name}'. "
-                                            "In SQL three-valued logic, records where "
-                                            f"'{col_name}' is NULL evaluate to NULL (falsy) and are excluded from "
-                                            "the quarantine stream as well."
-                                        ),
-                                        recommendation=(
-                                            f"Wrap condition in coalesce(({filter_sql}), false) or explicitly "
-                                            f"include 'OR {col_name} IS NULL'."
-                                        ),
-                                        line_number=child.lineno,
-                                        estimated_dbu_impact="High (Data Loss Risk)",
-                                        code_snippet=filter_sql,
-                                    )
-                                )
+        for child, table_name in self.filter_calls:
+            if not child.args:
+                continue
+            arg = child.args[0]
+            if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+                continue
+
+            filter_sql = arg.value
+            try:
+                parsed_filter = sqlglot.parse_one(filter_sql, read="spark")
+            except sqlglot.errors.SqlglotError:
+                continue
+
+            filter_cols = {
+                c.name.lower()
+                for c in parsed_filter.find_all(sqlglot.exp.Column)
+                if c.name
+            }
+            matching_cols = filter_cols.intersection(all_cols)
+            if not matching_cols:
+                continue
+
+            # Check if this is a valid-side filter (matching the expectation condition itself)
+            is_valid_side = False
+            for _, _, pe, _ in parsed_exps:
+                if parsed_filter == pe:
+                    is_valid_side = True
+                    break
+                try:
+                    if simplify(parsed_filter) == simplify(pe):
+                        is_valid_side = True
+                        break
+                except (sqlglot.errors.SqlglotError, ValueError, TypeError):
+                    continue
+
+            if is_valid_side:
+                continue
+
+            # DD002 only flags filters that feed a table named *quarantine*/*invalid*/*dlq*/*rejected*
+            # or that are the syntactic complement of an expectation
+            is_quarantine_table = bool(quarantine_pattern.search(table_name))
+            is_complement = False
+            matched_rule_cond: str | None = None
+
+            for _, cond_sql, pe, cols in parsed_exps:
+                if not filter_cols.intersection(cols):
+                    continue
+                try:
+                    s_filter = simplify(parsed_filter)
+                    s_not_exp = simplify(sqlglot.parse_one(f"NOT ({cond_sql})", read="spark"))
+                    if s_filter == s_not_exp:
+                        is_complement = True
+                        matched_rule_cond = cond_sql
+                        break
+                    s_not_filter = simplify(sqlglot.parse_one(f"NOT ({filter_sql})", read="spark"))
+                    s_exp = simplify(pe)
+                    if s_not_filter == s_exp:
+                        is_complement = True
+                        matched_rule_cond = cond_sql
+                        break
+                except (sqlglot.errors.SqlglotError, ValueError, TypeError):
+                    continue
+
+            if not (is_quarantine_table or is_complement):
+                continue
+
+            # Check for NULL handling
+            lowered_filter = filter_sql.lower()
+            for col_name in matching_cols:
+                has_null_handling = (
+                    f"{col_name} is null" in lowered_filter
+                    or "coalesce" in lowered_filter
+                    or "isnull" in lowered_filter
+                    or "is_null" in lowered_filter
+                    or "nvl" in lowered_filter
+                    or "ifnull" in lowered_filter
+                )
+                if not has_null_handling:
+                    target_cond = matched_rule_cond or filter_sql
+                    sev = self.config.get_severity("DD002", DiagnosticSeverity.HIGH)
+                    self.findings.append(
+                        DiagnosticFinding(
+                            rule_id="DD002",
+                            severity=sev,
+                            title="Quarantine filter is not NULL-safe complement",
+                            impact_summary=(
+                                f"Filter condition '{filter_sql}' does not handle NULL for column '{col_name}'. "
+                                "In SQL three-valued logic, records where "
+                                f"'{col_name}' is NULL evaluate to NULL (falsy) and are excluded from "
+                                "the quarantine stream as well."
+                            ),
+                            recommendation=(
+                                f"Wrap condition in coalesce(NOT ({target_cond}), true) or explicitly "
+                                f"include 'OR {col_name} IS NULL'."
+                            ),
+                            line_number=child.lineno,
+                            estimated_dbu_impact="High (Data Loss Risk)",
+                            code_snippet=filter_sql,
+                        )
+                    )
 
 
 def audit_sql_source(sql_text: str, config: DoctorConfig | None = None) -> list[DiagnosticFinding]:
