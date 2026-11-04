@@ -77,6 +77,7 @@ class PySparkCodeVisitor(ast.NodeVisitor):
                 dec_name = decorator.func.attr
 
             if dec_name.lower() == "udf":
+                dec_lineno = getattr(decorator, "lineno", node.lineno)
                 self.findings.append(
                     DiagnosticFinding(
                         rule_id="PYSPARK-001",
@@ -91,7 +92,7 @@ class PySparkCodeVisitor(ast.NodeVisitor):
                             "Rewrite using native PySpark built-in functions (F.when, F.coalesce), "
                             "Spark SQL expressions, or an Apache Arrow vectorized @pandas_udf."
                         ),
-                        line_number=node.lineno,
+                        line_number=dec_lineno,
                         estimated_dbu_impact="High (10x-50x slower processing)",
                         code_snippet=f"def {node.name}(...)",
                     )
@@ -284,18 +285,36 @@ class PlanDoctor:
                 continue
             if config and not config.is_rule_enabled(finding.rule_id, file_name):
                 continue
-            if finding.line_number and 1 <= finding.line_number <= len(lines):
-                line_text = lines[finding.line_number - 1]
-                m = re.search(r"#\s*dlt-doctor:\s*ignore\[([^\]]+)\]", line_text)
-                if m:
-                    suppressed_rules = [
-                        r.strip().upper() for r in m.group(1).split(",")
-                    ]
-                    if (
-                        finding.rule_id.upper() in suppressed_rules
-                        or "ALL" in suppressed_rules
-                    ):
-                        continue
+            is_suppressed = False
+            if finding.line_number:
+                cand_lines: list[int] = []
+                if isinstance(finding.line_number, int):
+                    cand_lines = [finding.line_number]
+                else:
+                    m_num = re.search(r"line\s+(\d+)", str(finding.line_number))
+                    if m_num:
+                        cand_lines = [int(m_num.group(1))]
+
+                for l_num in cand_lines:
+                    for offset in (0, -1, 1):
+                        idx = l_num - 1 + offset
+                        if 0 <= idx < len(lines):
+                            m = re.search(r"#\s*dlt-doctor:\s*ignore\[([^\]]+)\]", lines[idx])
+                            if m:
+                                suppressed_rules = [
+                                    r.strip().upper() for r in m.group(1).split(",")
+                                ]
+                                if (
+                                    finding.rule_id.upper() in suppressed_rules
+                                    or "ALL" in suppressed_rules
+                                ):
+                                    is_suppressed = True
+                                    break
+                    if is_suppressed:
+                        break
+
+            if is_suppressed:
+                continue
             filtered_findings.append(finding)
 
         return filtered_findings
