@@ -23,3 +23,6 @@ htmlcov/
 # IDEs
 .vscode/
 .idea/
+
+# Documentation build
+site/

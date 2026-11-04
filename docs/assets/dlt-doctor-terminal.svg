@@ -1,0 +1,51 @@
+<svg viewBox="0 0 860 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="termBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0E1726" />
+      <stop offset="100%" stop-color="#05080E" />
+    </linearGradient>
+  </defs>
+
+  <!-- Terminal Window Shell -->
+  <rect width="100%" height="100%" rx="12" fill="url(#termBg)" stroke="#1F2E45" stroke-width="1.5"/>
+
+  <!-- Top Title Bar -->
+  <rect width="100%" height="34" rx="12" fill="#14233A"/>
+  <rect y="22" width="100%" height="12" fill="#14233A"/> <!-- square lower corners -->
+
+  <!-- Window controls -->
+  <circle cx="20" cy="17" r="5" fill="#EF4444" />
+  <circle cx="36" cy="17" r="5" fill="#FF9B4A" />
+  <circle cx="52" cy="17" r="5" fill="#10B981" />
+
+  <text x="430" y="21" fill="#91A8A2" font-size="11" font-family="monospace" text-anchor="middle">bash: dlt-doctor analyze src/pipelines/orders_silver.py</text>
+
+  <!-- Terminal Body Content -->
+  <g transform="translate(24, 60)" font-family="'SF Mono', Consolas, Monaco, monospace" font-size="11.5" xml:space="preserve">
+    <!-- Prompt line -->
+    <text x="0" y="0" fill="#2EE6A7">$ <tspan fill="#EAF4F0">dlt-doctor analyze src/pipelines/orders_silver.py</tspan></text>
+
+    <!-- Header Box -->
+    <text x="0" y="24" fill="#1F2E45">====================================================================================</text>
+    <text x="0" y="42" fill="#38BDF8" font-weight="700"> DLT-Doctor Pipeline Audit: <tspan fill="#FFFFFF">orders_silver.py</tspan></text>
+    <text x="0" y="60" fill="#B0C4DE"> Health Score: <tspan fill="#FF9B4A" font-weight="700">55 / 100</tspan> | Potential DBU Savings: <tspan fill="#2EE6A7" font-weight="700">~65%</tspan> | Found 3 Bottlenecks</text>
+    <text x="0" y="78" fill="#1F2E45">====================================================================================</text>
+
+    <!-- Finding 1: Critical UDF -->
+    <text x="0" y="106" fill="#EF4444" font-weight="700">[CRITICAL] PYSPARK-001: Python UDF serialization overhead <tspan fill="#91A8A2">(Line 24)</tspan></text>
+    <text x="14" y="124" fill="#B0C4DE">Impact:  Function 'normalize_email' uses standard Python @udf.</text>
+    <text x="14" y="140" fill="#91A8A2">         Forces row-by-row JVM-Python socket IPC (~15.4x latency penalty).</text>
+    <text x="14" y="158" fill="#2EE6A7">Fix:     - @udf(returnType=StringType()) def normalize_email(s): return s.lower()</text>
+    <text x="14" y="174" fill="#2EE6A7">         + F.lower(F.trim(F.col("email")))</text>
+
+    <!-- Finding 2: withColumn Cascade -->
+    <text x="0" y="206" fill="#FF9B4A" font-weight="700">[HIGH] PYSPARK-002: Deep withColumn cascade <tspan fill="#91A8A2">(Line 42)</tspan></text>
+    <text x="14" y="224" fill="#B0C4DE">Impact:  Detected 7 chained .withColumn() calls. Causes Catalyst plan tree bloat.</text>
+    <text x="14" y="242" fill="#2EE6A7">Fix:     Consolidate into single df.withColumns({"c1": F.col("a"), "c2": F.col("b"), ...})</text>
+
+    <!-- Finding 3: Repartition -->
+    <text x="0" y="274" fill="#38BDF8" font-weight="700">[MEDIUM] PYSPARK-004: Repartition triggers full shuffle before table write <tspan fill="#91A8A2">(Line 68)</tspan></text>
+    <text x="14" y="292" fill="#B0C4DE">Impact:  .repartition(4) triggers full network shuffle when scaling down write files.</text>
+    <text x="14" y="308" fill="#2EE6A7">Fix:     Replace with .coalesce(4) to eliminate network shuffle completely.</text>
+  </g>
+</svg>

@@ -1,0 +1,106 @@
+<svg viewBox="0 0 800 240" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0E1726" />
+      <stop offset="100%" stop-color="#070C14" />
+    </linearGradient>
+    <linearGradient id="mintGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2EE6A7" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+    <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF9B4A" />
+      <stop offset="100%" stop-color="#FF6B4A" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <rect width="100%" height="100%" rx="16" fill="url(#bgGrad)" stroke="#1F2E45" stroke-width="1.5"/>
+
+  <!-- Grid accent lines -->
+  <g stroke="#1F2E45" stroke-width="0.5" stroke-dasharray="3 3">
+    <line x1="40" y1="40" x2="760" y2="40" />
+    <line x1="40" y1="120" x2="760" y2="120" />
+    <line x1="40" y1="200" x2="760" y2="200" />
+    <line x1="160" y1="20" x2="160" y2="220" />
+    <line x1="320" y1="20" x2="320" y2="220" />
+    <line x1="480" y1="20" x2="480" y2="220" />
+    <line x1="640" y1="20" x2="640" y2="220" />
+  </g>
+
+  <!-- Left: Mascot Hologram / Cybernetic Delta Doctor Drone -->
+  <g transform="translate(100, 120)">
+    <!-- Outer orbiting rings -->
+    <circle cx="0" cy="0" r="68" fill="none" stroke="#2EE6A7" stroke-width="1" stroke-dasharray="8 6" opacity="0.4">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="20s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="0" cy="0" r="54" fill="none" stroke="#38BDF8" stroke-width="1.5" stroke-dasharray="14 10" opacity="0.6">
+      <animateTransform attributeName="transform" type="rotate" from="360" to="0" dur="14s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Core diagnostic shield / Delta symbol -->
+    <polygon points="0,-36 32,24 -32,24" fill="#14233A" stroke="url(#mintGrad)" stroke-width="2.5" filter="url(#glow)"/>
+    <polygon points="0,-18 16,14 -16,14" fill="#2EE6A7" opacity="0.25"/>
+
+    <!-- Pulse radar crosshair in center -->
+    <line x1="-12" y1="0" x2="12" y2="0" stroke="#FF9B4A" stroke-width="2">
+      <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" repeatCount="indefinite"/>
+    </line>
+    <line x1="0" y1="-12" x2="0" y2="12" stroke="#FF9B4A" stroke-width="2">
+      <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" repeatCount="indefinite"/>
+    </line>
+
+    <!-- Medical cross badge on Delta shield -->
+    <g transform="translate(0, 5) scale(0.7)">
+      <rect x="-3" y="-12" width="6" height="24" rx="2" fill="#2EE6A7" filter="url(#glow)"/>
+      <rect x="-12" y="-3" width="24" height="6" rx="2" fill="#2EE6A7" filter="url(#glow)"/>
+    </g>
+
+    <!-- Sensor beacon node -->
+    <circle cx="0" cy="-36" r="4" fill="#FF9B4A" filter="url(#glow)">
+      <animate attributeName="r" values="3;5;3" dur="1.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-32" cy="24" r="3" fill="#38BDF8"/>
+    <circle cx="32" cy="24" r="3" fill="#38BDF8"/>
+  </g>
+
+  <!-- Right: Identity Typography & Live Diagnostic Telemetry Badges -->
+  <g transform="translate(210, 0)">
+    <!-- Badge -->
+    <rect x="0" y="32" width="180" height="22" rx="11" fill="#14233A" stroke="#2EE6A7" stroke-width="1"/>
+    <circle cx="12" cy="43" r="4" fill="#2EE6A7">
+      <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="24" y="47" fill="#2EE6A7" font-size="10" font-family="-apple-system, BlinkMacSystemFont, monospace" font-weight="700" letter-spacing="1">SYSTEMS DIAGNOSTICS</text>
+
+    <!-- Title -->
+    <text x="0" y="92" fill="#FFFFFF" font-size="34" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="800" letter-spacing="-0.5">dlt-doctor</text>
+    <text x="180" y="92" fill="#91A8A2" font-size="16" font-family="-apple-system, BlinkMacSystemFont, monospace" font-weight="500">v0.1.0</text>
+
+    <!-- Subtitle -->
+    <text x="0" y="122" fill="#B0C4DE" font-size="14" font-family="-apple-system, BlinkMacSystemFont, sans-serif">
+      The Autonomous Optimization &amp; Quality Engine for Databricks Lakehouses
+    </text>
+
+    <!-- Metric Pills -->
+    <g transform="translate(0, 146)">
+      <!-- Pill 1: PySpark AST -->
+      <rect x="0" y="0" width="154" height="46" rx="8" fill="#14233A" stroke="#1F2E45" stroke-width="1"/>
+      <text x="14" y="18" fill="#91A8A2" font-size="9" font-family="monospace">CATALYST &amp; AST</text>
+      <text x="14" y="36" fill="#2EE6A7" font-size="13" font-weight="700" font-family="monospace">15x UDF Speedup</text>
+
+      <!-- Pill 2: DLT Quarantine -->
+      <rect x="166" y="0" width="168" height="46" rx="8" fill="#14233A" stroke="#1F2E45" stroke-width="1"/>
+      <text x="14" y="18" fill="#91A8A2" font-size="9" font-family="monospace" transform="translate(166, 0)">DLT EXPECTATIONS</text>
+      <text x="14" y="36" fill="#38BDF8" font-size="13" font-weight="700" font-family="monospace" transform="translate(166, 0)">Zero Silent Drops</text>
+
+      <!-- Pill 3: Blast Radius -->
+      <rect x="346" y="0" width="176" height="46" rx="8" fill="#14233A" stroke="#1F2E45" stroke-width="1"/>
+      <text x="14" y="18" fill="#91A8A2" font-size="9" font-family="monospace" transform="translate(346, 0)">RESTATION MERGE</text>
+      <text x="14" y="36" fill="#FF9B4A" font-size="13" font-weight="700" font-family="monospace" transform="translate(346, 0)">98.1% Scan Bypass</text>
+    </g>
+  </g>
+</svg>

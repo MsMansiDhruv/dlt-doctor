@@ -12,6 +12,7 @@ from dlt_doctor.cdc import CdcDoctor
 from dlt_doctor.checkpoint import CheckpointDoctor
 from dlt_doctor.cluster import ClusterDoctor, ColumnProfile
 from dlt_doctor.compaction import CompactionDoctor
+from dlt_doctor.connect import WorkspaceInspector
 from dlt_doctor.cost import CostDoctor
 from dlt_doctor.history import HistoryDoctor
 from dlt_doctor.notebook import extract_notebook_code, is_notebook_file
@@ -190,6 +191,23 @@ def main() -> int:
     )
     checkpoint_parser.add_argument(
         "--keys-changed", action="store_true", help="Aggregation keys changed"
+    )
+
+    # inspect-table command
+    inspect_parser = subparsers.add_parser(
+        "inspect-table",
+        help="Inspect live Delta Lake table telemetry in Databricks workspace",
+    )
+    inspect_parser.add_argument(
+        "table", help="Target table name (e.g. main.gold.orders)"
+    )
+    inspect_parser.add_argument("--host", help="Databricks host URL")
+    inspect_parser.add_argument("--token", help="Databricks personal access token")
+    inspect_parser.add_argument("--warehouse-id", help="Databricks SQL warehouse ID")
+    inspect_parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Run against simulated production telemetry",
     )
 
     args = parser.parse_args()
@@ -501,6 +519,35 @@ def main() -> int:
             print(f"  {step}")
         print("-" * 70)
         return 1 if report.status.value == "INCOMPATIBLE" else 0
+
+    elif args.command == "inspect-table":
+        inspector = WorkspaceInspector(
+            host=args.host,
+            token=args.token,
+            warehouse_id=args.warehouse_id,
+        )
+        mock_detail = None
+        mock_history = None
+        if args.mock:
+            mock_detail = {
+                "numFiles": 4500,
+                "sizeInBytes": 45 * 1024 * 1024 * 1024,  # 45 GB
+                "clusteringColumns": ["customer_id", "order_date"],
+                "partitionColumns": [],
+            }
+            mock_history = [{"version": i} for i in range(25)]
+
+        try:
+            report = inspector.inspect_table(
+                table_name=args.table,
+                mock_detail=mock_detail,
+                mock_history=mock_history,
+            )
+            print(report.to_text())
+            return 0
+        except Exception as exc:
+            print(f"Error inspecting table {args.table}: {exc}", file=sys.stderr)
+            return 1
 
     return 0
 

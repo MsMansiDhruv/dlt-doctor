@@ -23,6 +23,7 @@ from dlt_doctor.cluster import (
     LiquidClusterRecommendation,
 )
 from dlt_doctor.compaction import CompactionDebtReport, CompactionDoctor
+from dlt_doctor.connect import TableInspectionReport, WorkspaceInspector
 from dlt_doctor.cost import (
     ClusterSizingProfile,
     CostDoctor,
@@ -58,7 +59,7 @@ from dlt_doctor.vacuum import (
     VacuumSafetyReport,
 )
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 __all__ = [
     "DirectoryScanner",
@@ -66,6 +67,8 @@ __all__ = [
     "extract_notebook_code",
     "is_notebook_file",
     "audit_code_cell",
+    "WorkspaceInspector",
+    "TableInspectionReport",
     "PlanDoctor",
     "DiagnosticFinding",
     "DiagnosticSeverity",

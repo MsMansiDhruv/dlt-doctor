@@ -7,13 +7,15 @@
 </p>
 
 [![PyPI](https://img.shields.io/badge/PyPI-dlt--doctor-3776AB?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/dlt-doctor/)
+[![Docs](https://img.shields.io/badge/Docs-Live%20Site-0E1726?style=for-the-badge&logo=materialformkdocs&logoColor=2EE6A7)](https://msmansidhruv.github.io/dlt-doctor/)
 [![Runtime](https://img.shields.io/badge/Runtime-Databricks%20%7C%20Spark%203.5+-FF9B4A?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org/)
 [![Storage](https://img.shields.io/badge/Storage-Delta%20Lake%20%26%20CDF-2EE6A7?style=for-the-badge&logo=delta&logoColor=white)](https://delta.io/)
 [![Governance](https://img.shields.io/badge/Governance-Unity%20Catalog-0E1726?style=for-the-badge&logo=databricks&logoColor=2EE6A7)](https://www.databricks.com/product/unity-catalog)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
-[![CI Tests](https://img.shields.io/badge/CI-60%20Tests%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
+[![CI Tests](https://img.shields.io/badge/CI-63%20Tests%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
 
 <p align="center">
+  <a href="https://msmansidhruv.github.io/dlt-doctor/">Documentation</a> •
   <a href="#the-story">The Problem</a> •
   <a href="#showcase-video">Video</a> •
   <a href="#benchmarks">Benchmarks</a> •
@@ -117,6 +119,10 @@ Commercial observability tools (Monte Carlo, Anomalo, Unravel Data, Acceldata) c
 
 ## Quickstart
 
+### Interactive Walkthrough Notebook
+
+Import [`notebooks/01_dlt_doctor_walkthrough.ipynb`](./notebooks/01_dlt_doctor_walkthrough.ipynb) directly into your Databricks workspace to run the interactive cell magic and AST optimizers live on your cluster.
+
 ### 1. Installation
 
 ```bash
@@ -165,6 +171,9 @@ dlt-doctor uc-migrate src/pipelines/orders.py --catalog prod_lakehouse --schema 
 
 # Forecast Databricks DBU burn and cluster sizing (Serverless vs Classic DLT)
 dlt-doctor cost --files-per-hour 25000 --avg-file-mb 12 --joins 2
+
+# Inspect live Delta Lake table telemetry in Databricks (compaction debt, commit velocity, vacuum safety)
+dlt-doctor inspect-table main.gold.orders --warehouse-id <warehouse_id>
 ```
 
 ### 4. Interactive Databricks Notebook Cell Magic
@@ -323,7 +332,7 @@ The test suite validates all 11 diagnostic engines across Python 3.10, 3.11, and
 
 ```bash
 pytest -v
-# 60 passed in 0.16s
+# 63 passed in 0.17s
 ```
 
 All source code is audited with `ruff` and verified against security vulnerabilities with `bandit -r src`.

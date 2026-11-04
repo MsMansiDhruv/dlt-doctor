@@ -1,0 +1,70 @@
+site_name: dlt-doctor
+site_description: Production Optimization Engine and Quality Accelerator for Databricks DLT & PySpark
+site_author: Mansi Dhruv
+site_url: https://msmansidhruv.github.io/dlt-doctor/
+
+repo_name: MsMansiDhruv/dlt-doctor
+repo_url: https://github.com/MsMansiDhruv/dlt-doctor
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: emerald
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: teal
+      accent: emerald
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+
+nav:
+  - Overview: index.md
+  - The Story: story.md
+  - Benchmarks: benchmarks.md
+  - CLI & Usage: cli.md
+  - Interactive Notebooks: interactive.md
+  - Diagnostic Engines:
+      - Catalyst AST Optimizer: engines/catalyst.md
+      - Zero-Loss Quarantine: engines/expectations.md
+      - Late Data Restatement: engines/restatement.md
+      - Streaming CDC Deduplication: engines/cdc.md
+      - Unity Catalog Migration: engines/uc.md
+      - Liquid Clustering Advisor: engines/cluster.md
+      - Workspace Telemetry: engines/connect.md
+      - Compaction Debt: engines/compaction.md
+      - Auto Loader Ingestion: engines/autoloader.md
+      - DBU Cost Forecasting: engines/cost.md
+      - Shuffle Spill Eliminator: engines/spill.md
+      - Checkpoint Integrity: engines/checkpoint.md
+  - GitHub Action: github-action.md
