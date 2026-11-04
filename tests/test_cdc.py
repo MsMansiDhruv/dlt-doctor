@@ -1,5 +1,12 @@
 """Tests for CdcDoctor streaming deduplication and SCD templates."""
 
+from __future__ import annotations
+
+import ast
+
+import pytest
+import sqlglot
+
 from dlt_doctor.cdc import CdcDoctor
 
 
@@ -19,3 +26,135 @@ def test_cdc_doctor_templates() -> None:
     assert "Window.partitionBy(['merchant_id'])" in template.microbatch_dedup_code
     assert "row_number().over(window_spec)" in template.microbatch_dedup_code
     assert "is_current = false" in template.scd2_merge_sql
+
+
+def test_cdf_filter_indentation() -> None:
+    """Microbatch dedup code must have consistent 4-space indentation for cdf_filter."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="main.silver.orders",
+        primary_keys=["order_id"],
+        source_is_cdf=True,
+    )
+    # ast.parse ensures Python syntax is valid
+    parsed_ast = ast.parse(template.microbatch_dedup_code)
+    assert parsed_ast is not None
+    # Check that cdf_filter does not contain 8 spaces
+    assert "        microbatch_df = microbatch_df.filter" not in template.microbatch_dedup_code
+    assert "    microbatch_df = microbatch_df.filter" in template.microbatch_dedup_code
+
+
+def test_cdc_drops_change_type_before_merge_and_handles_deletes_separately() -> None:
+    """_change_type must be dropped before MERGE, with deletes handled in a separate clause."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+    )
+    # Microbatch dedup code drops _change_type before temp view
+    assert "drop('_change_type'" in template.microbatch_dedup_code or ".drop('_change_type'," in template.microbatch_dedup_code
+    # SCD1 MERGE must not update or insert _change_type column
+    assert "source._change_type" not in template.scd1_merge_sql
+    # Deletes must be handled in a separate clause
+    assert "DELETE FROM silver_orders" in template.scd1_merge_sql
+
+
+def test_scd2_template_structure_and_syntax() -> None:
+    """SCD2 template must use distinct merge_key, correct join alias, no helper columns inserted, and set valid_from/to/is_current."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_customers",
+        primary_keys=["customer_id"],
+        event_time_col="updated_at",
+    )
+    sql = template.scd2_merge_sql
+
+    # Must parse with sqlglot
+    parsed = sqlglot.parse_one(sql, read="spark")
+    assert parsed is not None
+
+    # Distinct merge_key column used in ON clause and staging query
+    assert "merge_key" in sql
+    assert "merge_insert" not in sql  # Old bug helper column removed
+
+    # Correct join alias: current_target.customer_id = source.customer_id
+    assert "current_target.customer_id = source.customer_id" in sql
+    join_clause = sql.split("JOIN")[1].split("UNION")[0]
+    assert " target.customer_id = source.customer_id" not in join_clause
+
+    # Target fields set: valid_from, valid_to, is_current
+    assert "valid_to = staged.updated_at" in sql or "valid_to = source.updated_at" in sql
+    assert "is_current = false" in sql or "is_current = FALSE" in sql
+    assert "is_current" in sql
+    assert "valid_from" in sql
+
+
+def test_auto_cdc_creates_streaming_table() -> None:
+    """AUTO CDC template must include dlt.create_streaming_table before dlt.apply_changes."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+    )
+    code = template.auto_cdc_code
+
+    # Must be valid Python AST
+    parsed_ast = ast.parse(code)
+    assert parsed_ast is not None
+
+    # Must declare create_streaming_table before apply_changes
+    assert "dlt.create_streaming_table" in code
+    assert "dlt.apply_changes" in code
+    assert code.index("dlt.create_streaming_table") < code.index("dlt.apply_changes")
+
+
+@pytest.mark.integration
+def test_execute_cdc_scd_on_pyspark() -> None:
+    """Execute generated CDC SCD1 and SCD2 statements against local PySpark Delta tables."""
+    try:
+        from pyspark.sql import SparkSession
+    except ImportError:
+        pytest.skip("PySpark not installed")
+
+    try:
+        spark = (
+            SparkSession.builder.master("local[1]")
+            .appName("CdcTest")
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .getOrCreate()
+        )
+    except Exception as exc:
+        pytest.skip(f"Local PySpark/JVM not available: {exc}")
+
+    try:
+        # Create SCD1 target and batch
+        spark.sql("CREATE TABLE IF NOT EXISTS default.cdc_scd1_tgt (id INT, amt DOUBLE) USING DELTA")
+        spark.sql("CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS SELECT 1 AS id")
+        spark.sql("CREATE OR REPLACE TEMP VIEW source_cdc_batch AS SELECT 2 AS id, 100.0 AS amt")
+        doctor = CdcDoctor()
+        tmpl = doctor.generate_cdc_templates("default.cdc_scd1_tgt", ["id"])
+        for stmt in tmpl.scd1_merge_sql.split(";"):
+            cleaned = stmt.strip()
+            if cleaned:
+                spark.sql(cleaned)
+
+        # Create SCD2 target and execute SCD2 MERGE
+        spark.sql("""
+            CREATE TABLE IF NOT EXISTS default.cdc_scd2_tgt (
+                id INT,
+                amt DOUBLE,
+                updated_at TIMESTAMP,
+                is_current BOOLEAN,
+                valid_from TIMESTAMP,
+                valid_to TIMESTAMP
+            ) USING DELTA
+        """)
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT 2 AS id, 150.0 AS amt, current_timestamp() AS updated_at
+        """)
+        tmpl_scd2 = doctor.generate_cdc_templates("default.cdc_scd2_tgt", ["id"], event_time_col="updated_at")
+        spark.sql(tmpl_scd2.scd2_merge_sql)
+    finally:
+        spark.stop()

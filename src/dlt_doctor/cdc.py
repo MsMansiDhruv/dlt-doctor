@@ -39,6 +39,7 @@ class CdcDoctor:
         sequence_col: str = "_cdc_seq_id",
         partition_col: str | None = None,
         source_is_cdf: bool = True,
+        value_cols: list[str] | None = None,
     ) -> CdcMergeTemplate:
         """Generate deduplication and MERGE patterns to eliminate multiple-match errors."""
         clean_target = _validate_identifier(target_table)
@@ -46,16 +47,24 @@ class CdcDoctor:
         clean_time = _validate_identifier(event_time_col)
         clean_seq = _validate_identifier(sequence_col)
         clean_part = _validate_identifier(partition_col) if partition_col else None
+        clean_values = [_validate_identifier(v) for v in value_cols] if value_cols else []
 
         pk_str = ", ".join(f"'{k}'" for k in clean_keys)
         pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
+        current_target_pk_join = " AND ".join(f"current_target.{k} = source.{k}" for k in clean_keys)
+        del_join = " AND ".join(f"target.{k} = del.{k}" for k in clean_keys)
 
         partition_clause = ""
         if clean_part:
             partition_clause = f"AND target.{clean_part} = source.{clean_part} "
 
-        # In-batch deduplication
-        cdf_filter = "        # Drop Change Data Feed update_preimage before deduplication\n        microbatch_df = microbatch_df.filter(F.col('_change_type') != 'update_preimage')\n" if source_is_cdf else ""
+        # In-batch deduplication with proper 4-space indentation
+        cdf_filter = (
+            "    # Drop Change Data Feed update_preimage before deduplication\n"
+            "    microbatch_df = microbatch_df.filter(F.col('_change_type') != 'update_preimage')\n"
+            if source_is_cdf
+            else ""
+        )
 
         dedup_code = (
             "# 1. In-batch window deduplication (prevents Spark 'multiple matches' MERGE error)\n"
@@ -72,43 +81,63 @@ class CdcDoctor:
             "        .filter(F.col('_rn') == 1)\n"
             "        .drop('_rn')\n"
             "    )\n"
-            "    # Clean CDF metadata columns before MERGE to prevent schema collision\n"
-            "    cleaned_df = deduped_df.drop('_commit_version', '_commit_timestamp')\n"
+            "    # Handle deletes in a dedicated view, then drop _change_type before MERGE\n"
+            "    deletes_df = deduped_df.filter(F.col('_change_type') == 'delete')\n"
+            "    deletes_df.createOrReplaceTempView('cdc_deletes_batch')\n\n"
+            "    # Clean CDF metadata and drop _change_type to prevent schema collision in target table\n"
+            "    cleaned_df = (\n"
+            "        deduped_df.filter(F.col('_change_type') != 'delete')\n"
+            "        .drop('_change_type', '_commit_version', '_commit_timestamp')\n"
+            "    )\n"
             "    cleaned_df.createOrReplaceTempView('source_cdc_batch')\n"
         )
 
         scd1_sql = (
-            f"MERGE INTO {clean_target} AS target "  # nosec B608
-            f"USING source_cdc_batch AS source "
-            f"ON {pk_join} {partition_clause}"
-            f"WHEN MATCHED AND source._change_type = 'delete' THEN DELETE "
-            f"WHEN MATCHED THEN UPDATE SET * "
-            f"WHEN NOT MATCHED AND source._change_type != 'delete' THEN INSERT *;"
+            f"-- 1. Delete clause: process CDC deletes in a dedicated clause\n"
+            f"DELETE FROM {clean_target} AS target\n"  # nosec B608
+            f"WHERE EXISTS (\n"
+            f"    SELECT 1 FROM cdc_deletes_batch AS del\n"
+            f"    WHERE {del_join}\n"
+            f");\n\n"
+            f"-- 2. Upsert clause: source_cdc_batch has _change_type dropped\n"
+            f"MERGE INTO {clean_target} AS target\n"  # nosec B608
+            f"USING source_cdc_batch AS source\n"
+            f"ON {pk_join} {partition_clause}\n"
+            f"WHEN MATCHED THEN UPDATE SET *\n"
+            f"WHEN NOT MATCHED THEN INSERT *;"
         )
 
         # Standard valid Databricks Delta SCD2 staging-union pattern
-        select_keys = ", ".join(f"source.{k}" for k in clean_keys)
-        staged_pk_join = " AND ".join(f"target.{k} = staged.{k}" for k in clean_keys)
+        insert_cols_list = clean_keys + [c for c in clean_values if c not in clean_keys] + ["is_current", "valid_from", "valid_to"]
+        insert_vals_list = [f"staged.{c}" for c in clean_keys + [c for c in clean_values if c not in clean_keys]] + ["true", f"staged.{clean_time}", "NULL"]
+        insert_cols_str = ", ".join(insert_cols_list)
+        insert_vals_str = ", ".join(insert_vals_list)
 
         scd2_sql = (
-            f"MERGE INTO {clean_target} AS target "  # nosec B608
+            f"MERGE INTO {clean_target} AS target\n"  # nosec B608
             f"USING (\n"
-            f"    SELECT {select_keys}, true AS merge_insert, source.* FROM source_cdc_batch AS source\n"
+            f"    SELECT source.{clean_keys[0]} AS merge_key, source.* FROM source_cdc_batch AS source\n"
+            f"    JOIN {clean_target} AS current_target ON {current_target_pk_join} AND current_target.is_current = true\n"
             f"    UNION ALL\n"
-            f"    SELECT {select_keys}, false AS merge_insert, source.* FROM source_cdc_batch AS source\n"
-            f"    JOIN {clean_target} AS current_target ON {pk_join} AND current_target.is_current = true\n"
-            f") AS staged "
-            f"ON {staged_pk_join} AND target.is_current = true "
-            f"WHEN MATCHED AND staged.merge_insert = false THEN "
-            f"UPDATE SET is_current = false, valid_to = staged.{clean_time} "
-            f"WHEN NOT MATCHED AND staged.merge_insert = true THEN "
-            f"INSERT *;"
+            f"    SELECT NULL AS merge_key, source.* FROM source_cdc_batch AS source\n"
+            f") AS staged\n"
+            f"ON target.{clean_keys[0]} = staged.merge_key AND target.is_current = true\n"
+            f"WHEN MATCHED THEN\n"
+            f"    UPDATE SET is_current = false, valid_to = staged.{clean_time}\n"
+            f"WHEN NOT MATCHED THEN\n"
+            f"    INSERT ({insert_cols_str})\n"
+            f"    VALUES ({insert_vals_str});"
         )
 
         auto_cdc_code = (
             "# Modern Databricks Lakeflow Declarative CDC pattern (Recommended)\n"
             "import dlt\n"
             "from pyspark.sql import functions as F\n\n"
+            "# 1. Declare target streaming table before applying changes\n"
+            "dlt.create_streaming_table(\n"
+            f"    name='{clean_target}'\n"
+            ")\n\n"
+            "# 2. Declare CDC flow into streaming table\n"
             "dlt.apply_changes(\n"
             f"    target='{clean_target}',\n"
             "    source='source_cdc_stream',\n"
