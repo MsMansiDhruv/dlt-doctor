@@ -784,6 +784,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#pipeline-managed-tables-vs-re-feeding-upstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline-Managed Tables vs Re-feeding Upstream
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pipeline-Managed Tables vs Re-feeding Upstream">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-pattern-upstream-re-feeding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Pattern: Upstream Re-feeding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secondary-pattern-delta-merge-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secondary Pattern: Delta MERGE Replay
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-replay-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -795,10 +834,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#idempotence-and-auditability" class="md-nav__link">
+  <a href="#idempotence-and-safeguards" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Idempotence and Auditability
+        Idempotence and Safeguards
       
     </span>
   </a>
@@ -1269,6 +1308,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#pipeline-managed-tables-vs-re-feeding-upstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline-Managed Tables vs Re-feeding Upstream
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pipeline-Managed Tables vs Re-feeding Upstream">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-pattern-upstream-re-feeding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Pattern: Upstream Re-feeding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secondary-pattern-delta-merge-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secondary Pattern: Delta MERGE Replay
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-replay-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1280,10 +1358,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#idempotence-and-auditability" class="md-nav__link">
+  <a href="#idempotence-and-safeguards" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Idempotence and Auditability
+        Idempotence and Safeguards
       
     </span>
   </a>
@@ -1316,7 +1394,17 @@
 
 
 <h1 id="quarantine-replay-engine-dlt-doctor-replay">Quarantine Replay Engine (<code>dlt-doctor replay</code>)</h1>
-<p>Once records have been quarantined and corrected (either via manual remediation in an operational data store, upstream source fixes, or schema evolution), data engineers need an idempotent mechanism to merge resolved records into the target production tables.</p>
+<p>Once records have been quarantined and corrected (either via manual remediation in an operational data store, upstream source fixes, or schema evolution), data engineers need an idempotent mechanism to merge resolved records into target tables.</p>
+<h2 id="pipeline-managed-tables-vs-re-feeding-upstream">Pipeline-Managed Tables vs Re-feeding Upstream</h2>
+<blockquote>
+<p>[!IMPORTANT]
+<strong>DML Restrictions on Pipeline-Managed Tables:</strong>
+Direct DML operations (<code>MERGE</code>, <code>UPDATE</code>, <code>DELETE</code>) against streaming tables or materialized views managed by Databricks Lakeflow / Delta Live Tables are restricted in Unity Catalog. External DML bypasses pipeline checkpointing, state stores, and dependency graphs, risking state corruption or silent overwrites on subsequent pipeline updates.</p>
+</blockquote>
+<h3 id="recommended-pattern-upstream-re-feeding">Recommended Pattern: Upstream Re-feeding</h3>
+<p>The most robust way to reprocess quarantined records is to <strong>re-feed corrected rows into the pipeline's upstream ingestion source</strong> (such as the Bronze table or landing stream) with an incremented timestamp or sequence ID. The declarative pipeline will then ingest and validate the records naturally through its standard lineage.</p>
+<h3 id="secondary-pattern-delta-merge-replay">Secondary Pattern: Delta MERGE Replay</h3>
+<p>For standalone Delta Lake target tables, staging layers, or unmanaged pipelines, <code>dlt-doctor replay</code> generates deduplicated, NULL-safe MERGE SQL with automated recency guards.</p>
 <h2 id="the-replay-workflow">The Replay Workflow</h2>
 <ol>
 <li>
@@ -1327,33 +1415,40 @@
 </code></pre></div></p>
 </li>
 <li>
-<p><strong>Generate Replay SQL</strong>: Use <code>dlt-doctor replay</code> to generate idempotent Delta Lake MERGE SQL:
+<p><strong>Generate Replay SQL</strong>: Use <code>dlt-doctor replay</code>:
    <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>dlt-doctor<span class="w"> </span>replay<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--quarantine-table<span class="w"> </span>main.silver.orders_quarantine<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--target-table<span class="w"> </span>main.silver.orders<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--quarantine<span class="w"> </span>main.silver.orders_quarantine<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--target<span class="w"> </span>main.silver.orders<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--keys<span class="w"> </span>order_id<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--filter<span class="w"> </span><span class="s2">"order_date &gt;= '2026-10-01'"</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--rule<span class="w"> </span>positive_amount<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--start-time<span class="w"> </span><span class="m">2026</span>-10-01T00:00:00Z<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span>--recency-col<span class="w"> </span>updated_at
 </code></pre></div></p>
 </li>
 <li>
 <p><strong>Generated SQL Pattern</strong>:
-   <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">MERGE</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="n">main</span><span class="p">.</span><span class="n">silver</span><span class="p">.</span><span class="n">orders</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">target</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">USING</span><span class="w"> </span><span class="p">(</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">EXCEPT</span><span class="w"> </span><span class="p">(</span><span class="n">_failed_rules</span><span class="p">,</span><span class="w"> </span><span class="n">_quarantined_at</span><span class="p">)</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="k">FROM</span><span class="w"> </span><span class="n">main</span><span class="p">.</span><span class="n">silver</span><span class="p">.</span><span class="n">orders_quarantine</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="k">WHERE</span><span class="w"> </span><span class="n">order_date</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="s1">'2026-10-01'</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="k">source</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="k">ON</span><span class="w"> </span><span class="n">target</span><span class="p">.</span><span class="n">order_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">source</span><span class="p">.</span><span class="n">order_id</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">WHEN</span><span class="w"> </span><span class="n">MATCHED</span><span class="w"> </span><span class="k">THEN</span><span class="w"> </span><span class="k">UPDATE</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="o">*</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">WHEN</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">MATCHED</span><span class="w"> </span><span class="k">THEN</span><span class="w"> </span><span class="k">INSERT</span><span class="w"> </span><span class="o">*</span><span class="p">;</span>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1">-- Replay SQL: Reprocess quarantined records into target table idempotently</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1">-- Note: Prefer re-feeding corrected rows into the upstream source stream rather than direct DML.</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">MERGE</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="n">main</span><span class="p">.</span><span class="n">silver</span><span class="p">.</span><span class="n">orders</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">target</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">USING</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">EXCEPT</span><span class="w"> </span><span class="p">(</span><span class="n">_failed_rules</span><span class="p">,</span><span class="w"> </span><span class="n">_quarantined_at</span><span class="p">),</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">           </span><span class="k">current_timestamp</span><span class="p">()</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">_replayed_at</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="k">FROM</span><span class="w"> </span><span class="n">main</span><span class="p">.</span><span class="n">silver</span><span class="p">.</span><span class="n">orders_quarantine</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="k">WHERE</span><span class="w"> </span><span class="n">array_contains</span><span class="p">(</span><span class="n">_failed_rules</span><span class="p">,</span><span class="w"> </span><span class="s1">'positive_amount'</span><span class="p">)</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">_quarantined_at</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="s1">'2026-10-01T00:00:00Z'</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">    </span><span class="n">QUALIFY</span><span class="w"> </span><span class="n">row_number</span><span class="p">()</span><span class="w"> </span><span class="n">OVER</span><span class="w"> </span><span class="p">(</span><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">order_id</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">_quarantined_at</span><span class="w"> </span><span class="k">DESC</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="k">source</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="k">ON</span><span class="w"> </span><span class="n">target</span><span class="p">.</span><span class="n">order_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">source</span><span class="p">.</span><span class="n">order_id</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="k">WHEN</span><span class="w"> </span><span class="n">MATCHED</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="p">(</span><span class="n">target</span><span class="p">.</span><span class="n">updated_at</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">OR</span><span class="w"> </span><span class="k">source</span><span class="p">.</span><span class="n">updated_at</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="n">target</span><span class="p">.</span><span class="n">updated_at</span><span class="p">)</span><span class="w"> </span><span class="k">THEN</span><span class="w"> </span><span class="k">UPDATE</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="o">*</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="k">WHEN</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">MATCHED</span><span class="w"> </span><span class="k">THEN</span><span class="w"> </span><span class="k">INSERT</span><span class="w"> </span><span class="o">*</span><span class="p">;</span>
 </code></pre></div></p>
 </li>
 </ol>
-<h2 id="idempotence-and-auditability">Idempotence and Auditability</h2>
+<h2 id="idempotence-and-safeguards">Idempotence and Safeguards</h2>
 <ul>
-<li><strong>Deduplication</strong>: If multiple records exist for the same primary key in the quarantine stream, deduplicate within a staging view prior to MERGE execution.</li>
-<li><strong>Audit Column Stripping</strong>: Helper columns (<code>_failed_rules</code>, <code>_quarantined_at</code>) are automatically excluded from the source dataset so they do not collide with target schemas.</li>
-<li><strong>Tombstoning</strong>: Following successful replay, quarantined rows can either be deleted or flagged with a replay status (<code>_is_replayed = true</code>, <code>_replayed_at = current_timestamp()</code>).</li>
+<li><strong>Deduplication by Key</strong>: The generated query includes <code>QUALIFY row_number() OVER (PARTITION BY ... ORDER BY _quarantined_at DESC) = 1</code> to ensure multiple quarantine occurrences for the same key do not trigger Delta MERGE multiple-match exceptions.</li>
+<li><strong>ISO Timestamp Validation</strong>: CLI parameters <code>--start-time</code> and <code>--end-time</code> are validated against ISO 8601 to prevent malformed SQL predicates.</li>
+<li><strong>Recency Guard</strong>: Older quarantined rows cannot overwrite newer target records (<code>target.recency_col IS NULL OR source.recency_col &gt;= target.recency_col</code>).</li>
+<li><strong>Audit Columns</strong>: Every replayed row is marked with <code>_replayed_at = current_timestamp()</code>.</li>
 </ul>
 
 
