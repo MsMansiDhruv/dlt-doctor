@@ -67,4 +67,6 @@ nav:
       - DBU Cost Forecasting: engines/cost.md
       - Shuffle Spill Eliminator: engines/spill.md
       - Checkpoint Integrity: engines/checkpoint.md
+  - Articles & Deep Dives:
+      - Zero-Loss DLT Quarantine: articles/zero_loss_quarantine.md
   - GitHub Action: github-action.md
