@@ -13,9 +13,7 @@ def test_autoloader_config_to_spark_options() -> None:
     )
     opts = config.to_spark_options()
     assert opts["cloudFiles.format"] == "json"
-    assert (
-        opts["cloudFiles.schemaLocation"] == "/Volumes/main/checkpoints/orders_schema"
-    )
+    assert opts["cloudFiles.schemaLocation"] == "/Volumes/main/checkpoints/orders_schema"
     assert opts["cloudFiles.schemaEvolutionMode"] == "rescue"
     assert opts["cloudFiles.maxFilesPerTrigger"] == "500"
 

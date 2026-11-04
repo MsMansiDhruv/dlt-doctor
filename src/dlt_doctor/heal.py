@@ -37,7 +37,9 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
         )
 
     # Detect flavor (dp vs dlt)
-    flavor = "dp" if ("pyspark.pipelines" in source_code or "pipelines as dp" in source_code) else "dlt"
+    flavor = (
+        "dp" if ("pyspark.pipelines" in source_code or "pipelines as dp" in source_code) else "dlt"
+    )
 
     # Find functions with expect_or_drop
     target_funcs: list[ast.FunctionDef] = []
@@ -88,7 +90,11 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
         rules: list[ExpectationRule] = []
         for dec in func.decorator_list:
             if _is_drop_decorator(dec) and isinstance(dec, ast.Call):
-                if len(dec.args) >= 2 and isinstance(dec.args[0], ast.Constant) and isinstance(dec.args[1], ast.Constant):
+                if (
+                    len(dec.args) >= 2
+                    and isinstance(dec.args[0], ast.Constant)
+                    and isinstance(dec.args[1], ast.Constant)
+                ):
                     rule_name = str(dec.args[0].value)
                     condition_sql = str(dec.args[1].value)
                     rules.append(ExpectationRule(rule_name=rule_name, condition_sql=condition_sql))
@@ -120,13 +126,13 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
         is_streaming = _detect_is_streaming(func)
 
         # Partition decorators
-        non_drop_expect_decs = [d for d in func.decorator_list if _is_non_drop_expectation_decorator(d)]
+        non_drop_expect_decs = [
+            d for d in func.decorator_list if _is_non_drop_expectation_decorator(d)
+        ]
         custom_decs = [
             d
             for d in func.decorator_list
-            if not _is_drop_decorator(d)
-            and d != table_dec
-            and d not in non_drop_expect_decs
+            if not _is_drop_decorator(d) and d != table_dec and d not in non_drop_expect_decs
         ]
 
         # Extract text snippets
@@ -172,35 +178,35 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
         # Build raw view decorator
         raw_view_name = f"{table_name}_raw"
         if flavor == "dp":
-            raw_dec = f"@dp.temporary_view(name=\"{raw_view_name}\")"
+            raw_dec = f'@dp.temporary_view(name="{raw_view_name}")'
         else:
-            raw_dec = f"@dlt.view(name=\"{raw_view_name}\")"
+            raw_dec = f'@dlt.view(name="{raw_view_name}")'
 
         # Build staged view
         staged_view_name = f"{table_name}_staged"
         if flavor == "dp":
-            staged_dec = f"@dp.temporary_view(name=\"{staged_view_name}\")"
+            staged_dec = f'@dp.temporary_view(name="{staged_view_name}")'
             read_raw_expr = (
-                f"spark.readStream.table(\"{raw_view_name}\")"
+                f'spark.readStream.table("{raw_view_name}")'
                 if is_streaming
-                else f"spark.read.table(\"{raw_view_name}\")"
+                else f'spark.read.table("{raw_view_name}")'
             )
             read_staged_expr = (
-                f"spark.readStream.table(\"{staged_view_name}\")"
+                f'spark.readStream.table("{staged_view_name}")'
                 if is_streaming
-                else f"spark.read.table(\"{staged_view_name}\")"
+                else f'spark.read.table("{staged_view_name}")'
             )
         else:
-            staged_dec = f"@dlt.view(name=\"{staged_view_name}\")"
+            staged_dec = f'@dlt.view(name="{staged_view_name}")'
             read_raw_expr = (
-                f"dlt.read_stream(\"{raw_view_name}\")"
+                f'dlt.read_stream("{raw_view_name}")'
                 if is_streaming
-                else f"dlt.read(\"{raw_view_name}\")"
+                else f'dlt.read("{raw_view_name}")'
             )
             read_staged_expr = (
-                f"dlt.read_stream(\"{staged_view_name}\")"
+                f'dlt.read_stream("{staged_view_name}")'
                 if is_streaming
-                else f"dlt.read(\"{staged_view_name}\")"
+                else f'dlt.read("{staged_view_name}")'
             )
 
         # Build condition expressions for staged view
@@ -209,7 +215,7 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
             cond_escaped = r.condition_sql.replace('"', '\\"')
             r_escaped = r.rule_name.replace('"', '\\"')
             failed_items.append(
-                f"                F.when(~F.expr(\"coalesce(({cond_escaped}), false)\"), F.lit(\"{r_escaped}\")),"
+                f'                F.when(~F.expr("coalesce(({cond_escaped}), false)"), F.lit("{r_escaped}")),'
             )
         failed_rules_block = "\n".join(failed_items)
 
@@ -219,13 +225,13 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
             f"    return (\n"
             f"        {read_raw_expr}\n"
             f"        .select(\n"
-            f"            \"*\",\n"
+            f'            "*",\n'
             f"            F.array_compact(\n"
             f"                F.array(\n"
             f"{failed_rules_block}\n"
             f"                )\n"
-            f"            ).alias(\"_failed_rules\"),\n"
-            f"            F.current_timestamp().alias(\"_quarantined_at\"),\n"
+            f'            ).alias("_failed_rules"),\n'
+            f'            F.current_timestamp().alias("_quarantined_at"),\n'
             f"        )\n"
             f"    )\n"
         )
@@ -240,29 +246,31 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
             f"def {func.name}():\n"
             f"    return (\n"
             f"        {read_staged_expr}\n"
-            f"        .filter(F.size(F.col(\"_failed_rules\")) == 0)\n"
-            f"        .drop(\"_failed_rules\", \"_quarantined_at\")\n"
+            f'        .filter(F.size(F.col("_failed_rules")) == 0)\n'
+            f'        .drop("_failed_rules", "_quarantined_at")\n'
             f"    )\n"
         )
 
         # Build quarantine table
         quarantine_table_name = f"{table_name}_quarantine"
         if flavor == "dp":
-            quarantine_dec = f"@dp.table(name=\"{quarantine_table_name}\")"
+            quarantine_dec = f'@dp.table(name="{quarantine_table_name}")'
         else:
-            quarantine_dec = f"@dlt.table(name=\"{quarantine_table_name}\")"
+            quarantine_dec = f'@dlt.table(name="{quarantine_table_name}")'
 
         quarantine_func_code = (
             f"{quarantine_dec}\n"
             f"def {func.name}_quarantine():\n"
             f"    return (\n"
             f"        {read_staged_expr}\n"
-            f"        .filter(F.size(F.col(\"_failed_rules\")) > 0)\n"
+            f'        .filter(F.size(F.col("_failed_rules")) > 0)\n'
             f"    )\n"
         )
 
         # Combine all parts
-        custom_decs_prefix = "\n".join(custom_decs_text_list) + "\n" if custom_decs_text_list else ""
+        custom_decs_prefix = (
+            "\n".join(custom_decs_text_list) + "\n" if custom_decs_text_list else ""
+        )
         replacement_code = (
             f"{custom_decs_prefix}{raw_dec}\n"
             f"{raw_func_code}\n\n"

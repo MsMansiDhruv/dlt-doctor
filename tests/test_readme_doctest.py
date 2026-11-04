@@ -52,7 +52,9 @@ def test_readme_act2_execution() -> None:
         ExpectationRule("positive_amount", "amount > 0"),
     ]
     plan = exp_doctor.build_quarantine_routing("silver_orders", rules)
-    pipeline_code = exp_doctor.generate_pipeline_code(plan, source_table="bronze_orders", flavor="dp")
+    pipeline_code = exp_doctor.generate_pipeline_code(
+        plan, source_table="bronze_orders", flavor="dp"
+    )
     # Verify synthesized code compiles cleanly as valid Python
     parsed_ast = ast.parse(pipeline_code)
     assert parsed_ast is not None
@@ -94,12 +96,8 @@ def test_readme_act3_execution() -> None:
             ColumnProfile(
                 "customer_id", "string", distinct_count=25000, filter_frequency_score=0.9
             ),
-            ColumnProfile(
-                "order_date", "date", distinct_count=1800, filter_frequency_score=0.95
-            ),
-            ColumnProfile(
-                "order_uuid", "string", distinct_count=9900000
-            ),
+            ColumnProfile("order_date", "date", distinct_count=1800, filter_frequency_score=0.95),
+            ColumnProfile("order_uuid", "string", distinct_count=9900000),
         ],
         total_rows=10000000,
     )
@@ -141,6 +139,8 @@ def test_readme_python_blocks_are_syntactically_valid() -> None:
                 try:
                     ast.parse(clean_code)
                 except SyntaxError as exc:
-                    raise AssertionError(f"Failed to parse README python block: {exc}\nCode:\n{clean_code}") from exc
+                    raise AssertionError(
+                        f"Failed to parse README python block: {exc}\nCode:\n{clean_code}"
+                    ) from exc
         elif in_python_block:
             current_block.append(line)

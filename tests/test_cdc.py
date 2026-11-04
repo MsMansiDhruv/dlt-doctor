@@ -52,7 +52,10 @@ def test_cdc_drops_change_type_before_merge_and_handles_deletes_separately() -> 
         primary_keys=["order_id"],
     )
     # Microbatch dedup code drops _change_type before temp view
-    assert "drop('_change_type'" in template.microbatch_dedup_code or ".drop('_change_type'," in template.microbatch_dedup_code
+    assert (
+        "drop('_change_type'" in template.microbatch_dedup_code
+        or ".drop('_change_type'," in template.microbatch_dedup_code
+    )
     # SCD1 MERGE must not update or insert _change_type column
     assert "source._change_type" not in template.scd1_merge_sql
     # Deletes must be handled in a separate clause
@@ -121,7 +124,9 @@ def test_execute_cdc_scd_on_pyspark() -> None:
             SparkSession.builder.master("local[1]")
             .appName("CdcTest")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config(
+                "spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+            )
             .getOrCreate()
         )
     except Exception as exc:
@@ -129,7 +134,9 @@ def test_execute_cdc_scd_on_pyspark() -> None:
 
     try:
         # Create SCD1 target and batch
-        spark.sql("CREATE TABLE IF NOT EXISTS default.cdc_scd1_tgt (id INT, amt DOUBLE) USING DELTA")
+        spark.sql(
+            "CREATE TABLE IF NOT EXISTS default.cdc_scd1_tgt (id INT, amt DOUBLE) USING DELTA"
+        )
         spark.sql("CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS SELECT 1 AS id")
         spark.sql("CREATE OR REPLACE TEMP VIEW source_cdc_batch AS SELECT 2 AS id, 100.0 AS amt")
         doctor = CdcDoctor()
@@ -154,7 +161,9 @@ def test_execute_cdc_scd_on_pyspark() -> None:
             CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
             SELECT 2 AS id, 150.0 AS amt, current_timestamp() AS updated_at
         """)
-        tmpl_scd2 = doctor.generate_cdc_templates("default.cdc_scd2_tgt", ["id"], event_time_col="updated_at")
+        tmpl_scd2 = doctor.generate_cdc_templates(
+            "default.cdc_scd2_tgt", ["id"], event_time_col="updated_at"
+        )
         spark.sql(tmpl_scd2.scd2_merge_sql)
     finally:
         spark.stop()

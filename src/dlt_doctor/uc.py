@@ -64,9 +64,7 @@ class UcMigrationPlan:
 class UcDoctor:
     """Audits PySpark/SQL codebases for DBFS mounts, legacy paths, and two-tier tables."""
 
-    DBFS_MOUNT_REGEX = re.compile(
-        r"['\"](?:dbfs:)?/mnt/([a-zA-Z0-9_\-\.]+)(?:/([^'\"]*))?['\"]"
-    )
+    DBFS_MOUNT_REGEX = re.compile(r"['\"](?:dbfs:)?/mnt/([a-zA-Z0-9_\-\.]+)(?:/([^'\"]*))?['\"]")
     RAW_STORAGE_REGEX = re.compile(
         r"(s3a?://|abfss?://|gs://)([^/\s'\"\`]+)/([^\s'\"\`]+)", re.IGNORECASE
     )
@@ -78,9 +76,7 @@ class UcDoctor:
         target_schema: str = "bronze",
     ) -> UcMigrationPlan:
         """Scan source code for legacy storage paths and two-tier table references."""
-        plan = UcMigrationPlan(
-            target_catalog=target_catalog, target_schema=target_schema
-        )
+        plan = UcMigrationPlan(target_catalog=target_catalog, target_schema=target_schema)
 
         # 1. Regex scan for raw DBFS mount paths (/mnt/...)
         for line_num, line in enumerate(source_code.splitlines(), start=1):
@@ -88,8 +84,8 @@ class UcDoctor:
                 mount_name = match.group(1)
                 sub_path = match.group(2) or ""
                 legacy_str = match.group(0)
-                vol_path = f"/Volumes/{target_catalog}/{target_schema}/{mount_name}/{sub_path}".rstrip(
-                    "/"
+                vol_path = (
+                    f"/Volumes/{target_catalog}/{target_schema}/{mount_name}/{sub_path}".rstrip("/")
                 )
 
                 plan.findings.append(
@@ -165,7 +161,10 @@ class UcDoctor:
                     is_spark_table_call = False
                     if node.func.attr == "table":
                         caller = node.func.value
-                        if (isinstance(caller, ast.Name) and caller.id == "spark") or (isinstance(caller, ast.Attribute) and caller.attr in {"read", "readStream"}):
+                        if (isinstance(caller, ast.Name) and caller.id == "spark") or (
+                            isinstance(caller, ast.Attribute)
+                            and caller.attr in {"read", "readStream"}
+                        ):
                             is_spark_table_call = True
 
                     if is_spark_table_call and node.args:

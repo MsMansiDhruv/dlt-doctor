@@ -12,9 +12,15 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--table", required=True, help="Target Delta Lake table")
     p.add_argument("--late-date", required=True, help="Late arriving partition date (YYYY-MM-DD)")
     p.add_argument("--window", type=int, default=7, help="Rolling window size in days (default: 7)")
-    p.add_argument("--partition-col", default="order_date", help="Partition column (default: order_date)")
+    p.add_argument(
+        "--partition-col", default="order_date", help="Partition column (default: order_date)"
+    )
     p.add_argument("--match-key", default="id", help="Primary match key column (default: id)")
-    p.add_argument("--source", default="source_recalculated", help="Source staging table (default: source_recalculated)")
+    p.add_argument(
+        "--source",
+        default="source_recalculated",
+        help="Source staging table (default: source_recalculated)",
+    )
     p.add_argument(
         "--delete-unmatched",
         action="store_true",
@@ -39,6 +45,7 @@ def handle(args: argparse.Namespace) -> int:
         )
     except ValueError as exc:
         import sys
+
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

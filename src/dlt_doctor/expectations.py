@@ -173,7 +173,9 @@ class ExpectationDoctor:
         escaped_staging = _escape_table_name(staging_view_name)
 
         if flavor == "dp":
-            import_line = "from pyspark import pipelines as dp\nfrom pyspark.sql import functions as F"
+            import_line = (
+                "from pyspark import pipelines as dp\nfrom pyspark.sql import functions as F"
+            )
             pkg = "dp"
             read_src = f"spark.readStream.table('{escaped_src}')"
             read_staging = f"spark.readStream.table('{escaped_staging}')"
@@ -185,9 +187,7 @@ class ExpectationDoctor:
         else:
             raise ValueError(f"Unknown pipeline flavor '{flavor}'. Choose 'dp' or 'dlt'.")
 
-        escaped_expr = (
-            routing_plan.failed_rules_expr_sql.replace("\\", "\\\\").replace('"', '\\"')
-        )
+        escaped_expr = routing_plan.failed_rules_expr_sql.replace("\\", "\\\\").replace('"', '\\"')
 
         code_lines = [
             "# Auto-generated single-pass validation and quarantine pipeline by dlt-doctor",
@@ -236,6 +236,4 @@ class ExpectationDoctor:
         flavor: str = "dp",
     ) -> str:
         """Backward-compatible wrapper for generate_pipeline_code."""
-        return self.generate_pipeline_code(
-            routing_plan, source_table=source_table, flavor=flavor
-        )
+        return self.generate_pipeline_code(routing_plan, source_table=source_table, flavor=flavor)

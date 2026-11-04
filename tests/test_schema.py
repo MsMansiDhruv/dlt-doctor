@@ -18,15 +18,10 @@ def test_schema_safe_additions():
     report = doctor.compare_schemas("main.silver.customers", existing, incoming)
 
     assert not report.has_breaking_changes
-    additions = [
-        c for c in report.changes if c.severity == SchemaDriftSeverity.SAFE_ADDITION
-    ]
+    additions = [c for c in report.changes if c.severity == SchemaDriftSeverity.SAFE_ADDITION]
     assert len(additions) == 2
     assert len(report.generated_ddl) == 2
-    assert (
-        "ALTER TABLE main.silver.customers ADD COLUMNS (phone string);"
-        in report.generated_ddl
-    )
+    assert "ALTER TABLE main.silver.customers ADD COLUMNS (phone string);" in report.generated_ddl
 
 
 def test_schema_safe_widening():
@@ -37,9 +32,7 @@ def test_schema_safe_widening():
     report = doctor.compare_schemas("main.silver.orders", existing, incoming)
 
     assert not report.has_breaking_changes
-    widenings = [
-        c for c in report.changes if c.severity == SchemaDriftSeverity.SAFE_WIDENING
-    ]
+    widenings = [c for c in report.changes if c.severity == SchemaDriftSeverity.SAFE_WIDENING]
     assert len(widenings) == 2
 
 
@@ -54,8 +47,6 @@ def test_schema_breaking_mutation():
     breaking = [c for c in report.changes if c.severity == SchemaDriftSeverity.BREAKING]
     assert len(breaking) == 2
     assert (
-        report.recommended_spark_options.get(
-            "spark.databricks.delta.schema.autoMerge.enabled"
-        )
+        report.recommended_spark_options.get("spark.databricks.delta.schema.autoMerge.enabled")
         == "false"
     )

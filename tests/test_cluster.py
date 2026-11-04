@@ -40,9 +40,7 @@ def test_select_optimal_cluster_keys():
         ),  # too low
     ]
 
-    rec = doctor.advise_clustering(
-        "main.gold.fact_orders", columns, total_rows=10_000_000
-    )
+    rec = doctor.advise_clustering("main.gold.fact_orders", columns, total_rows=10_000_000)
 
     # Best candidates should be order_date, customer_id, country_code
     assert "order_date" in rec.recommended_keys

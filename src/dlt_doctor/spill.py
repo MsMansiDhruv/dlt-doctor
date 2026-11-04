@@ -41,9 +41,7 @@ class SpillDoctor:
         optimal = max(core_based_partitions, data_based_partitions)
 
         # Assess spill risk under default 200 partitions
-        default_partition_size_mb = (
-            dataset_size_mb / self.DEFAULT_SPARK_SHUFFLE_PARTITIONS
-        )
+        default_partition_size_mb = dataset_size_mb / self.DEFAULT_SPARK_SHUFFLE_PARTITIONS
         spill_risk = (
             default_partition_size_mb > 500.0
         )  # Partitions > 500MB risk memory spill to disk

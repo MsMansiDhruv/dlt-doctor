@@ -80,9 +80,7 @@ class CheckpointDoctor:
             )
 
         if not procedure:
-            procedure.append(
-                "Checkpoint directory is healthy. Safe to resume streaming execution."
-            )
+            procedure.append("Checkpoint directory is healthy. Safe to resume streaming execution.")
 
         guidance = (
             f"Checkpoint directory '{checkpoint_dir}' status: {status.value}. "

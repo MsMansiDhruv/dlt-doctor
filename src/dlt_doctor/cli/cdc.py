@@ -13,8 +13,12 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p.add_argument("--table", required=True, help="Target Delta table")
     p.add_argument("--keys", required=True, nargs="+", help="Primary key column(s)")
-    p.add_argument("--event-time", default="updated_at", help="Event timestamp column (default: updated_at)")
-    p.add_argument("--sequence-col", default="_cdc_seq_id", help="Sequence column (default: _cdc_seq_id)")
+    p.add_argument(
+        "--event-time", default="updated_at", help="Event timestamp column (default: updated_at)"
+    )
+    p.add_argument(
+        "--sequence-col", default="_cdc_seq_id", help="Sequence column (default: _cdc_seq_id)"
+    )
     p.add_argument(
         "--no-cdf-filter",
         action="store_true",
@@ -35,6 +39,7 @@ def handle(args: argparse.Namespace) -> int:
         )
     except ValueError as exc:
         import sys
+
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

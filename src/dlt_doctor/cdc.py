@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$|^`[a-zA-Z0-9_\.]+`$")
+IDENTIFIER_PATTERN = re.compile(
+    r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$|^`[a-zA-Z0-9_\.]+`$"
+)
 
 
 def _validate_identifier(identifier: str) -> str:
@@ -51,7 +53,9 @@ class CdcDoctor:
 
         pk_str = ", ".join(f"'{k}'" for k in clean_keys)
         pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
-        current_target_pk_join = " AND ".join(f"current_target.{k} = source.{k}" for k in clean_keys)
+        current_target_pk_join = " AND ".join(
+            f"current_target.{k} = source.{k}" for k in clean_keys
+        )
         del_join = " AND ".join(f"target.{k} = del.{k}" for k in clean_keys)
 
         partition_clause = ""
@@ -108,8 +112,14 @@ class CdcDoctor:
         )
 
         # Standard valid Databricks Delta SCD2 staging-union pattern
-        insert_cols_list = clean_keys + [c for c in clean_values if c not in clean_keys] + ["is_current", "valid_from", "valid_to"]
-        insert_vals_list = [f"staged.{c}" for c in clean_keys + [c for c in clean_values if c not in clean_keys]] + ["true", f"staged.{clean_time}", "NULL"]
+        insert_cols_list = (
+            clean_keys
+            + [c for c in clean_values if c not in clean_keys]
+            + ["is_current", "valid_from", "valid_to"]
+        )
+        insert_vals_list = [
+            f"staged.{c}" for c in clean_keys + [c for c in clean_values if c not in clean_keys]
+        ] + ["true", f"staged.{clean_time}", "NULL"]
         insert_cols_str = ", ".join(insert_cols_list)
         insert_vals_str = ", ".join(insert_vals_list)
 

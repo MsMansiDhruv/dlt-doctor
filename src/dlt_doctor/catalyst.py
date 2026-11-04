@@ -65,15 +65,11 @@ class PySparkCodeVisitor(ast.NodeVisitor):
             dec_name = ""
             if isinstance(decorator, ast.Name):
                 dec_name = decorator.id
-            elif isinstance(decorator, ast.Call) and isinstance(
-                decorator.func, ast.Name
-            ):
+            elif isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Name):
                 dec_name = decorator.func.id
             elif isinstance(decorator, ast.Attribute):
                 dec_name = decorator.attr
-            elif isinstance(decorator, ast.Call) and isinstance(
-                decorator.func, ast.Attribute
-            ):
+            elif isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
                 dec_name = decorator.func.attr
 
             if dec_name.lower() == "udf":
@@ -164,9 +160,7 @@ class PySparkCodeVisitor(ast.NodeVisitor):
                 )
             elif len(node.args) >= 1:
                 coalesce_hint = ".coalesce()"
-                if isinstance(node.args[0], ast.Constant) and isinstance(
-                    node.args[0].value, int
-                ):
+                if isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, int):
                     coalesce_hint = f".coalesce({node.args[0].value})"
                 self.findings.append(
                     DiagnosticFinding(
@@ -193,10 +187,7 @@ class PySparkCodeVisitor(ast.NodeVisitor):
         ):
             chain = [node]
             curr = node
-            while (
-                isinstance(curr.func, ast.Attribute)
-                and curr.func.attr == "withColumn"
-            ):
+            while isinstance(curr.func, ast.Attribute) and curr.func.attr == "withColumn":
                 if (
                     isinstance(curr.func.value, ast.Call)
                     and isinstance(curr.func.value.func, ast.Attribute)
@@ -418,11 +409,7 @@ class PlanDoctor:
             if any(act in line for act in action_names):
                 action_calls += 1
 
-        if (
-            action_calls >= 3
-            and ".cache()" not in source_code
-            and ".persist(" not in source_code
-        ):
+        if action_calls >= 3 and ".cache()" not in source_code and ".persist(" not in source_code:
             findings.append(
                 DiagnosticFinding(
                     rule_id="PYSPARK-005",

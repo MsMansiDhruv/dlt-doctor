@@ -8,13 +8,17 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$|^`[a-zA-Z0-9_\.]+`$")
+IDENTIFIER_PATTERN = re.compile(
+    r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$|^`[a-zA-Z0-9_\.]+`$"
+)
 
 
 def _validate_identifier(identifier: str) -> str:
     """Validate SQL identifier against injection patterns."""
     if not IDENTIFIER_PATTERN.match(identifier.strip()):
-        raise ValueError(f"Invalid SQL identifier '{identifier}'. Only alphanumeric and dotted names are allowed.")
+        raise ValueError(
+            f"Invalid SQL identifier '{identifier}'. Only alphanumeric and dotted names are allowed."
+        )
     return identifier.strip()
 
 

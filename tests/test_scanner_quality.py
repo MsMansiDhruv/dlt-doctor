@@ -11,23 +11,17 @@ from dlt_doctor.scanner import DirectoryScanner
 def test_notebook_parsed_cell_by_cell_without_crash() -> None:
     notebook_content = {
         "cells": [
-            {
-                "cell_type": "code",
-                "source": ["%md\n", "# Markdown title\n"]
-            },
-            {
-                "cell_type": "code",
-                "source": ["%sql\n", "SELECT * FROM bronze_orders;\n"]
-            },
+            {"cell_type": "code", "source": ["%md\n", "# Markdown title\n"]},
+            {"cell_type": "code", "source": ["%sql\n", "SELECT * FROM bronze_orders;\n"]},
             {
                 "cell_type": "code",
                 "source": [
                     "import dlt\n",
                     "@dlt.table\n",
                     "def silver():\n",
-                    "    return dlt.read_stream('bronze')\n"
-                ]
-            }
+                    "    return dlt.read_stream('bronze')\n",
+                ],
+            },
         ]
     }
     with tempfile.NamedTemporaryFile("w", suffix=".ipynb", delete=False, encoding="utf-8") as f:

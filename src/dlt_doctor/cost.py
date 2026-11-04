@@ -103,9 +103,7 @@ class CostDoctor:
             active_daily_hours = min(24.0, max(0.5, active_hours_per_day))
             classic_monthly_dbus = classic_dbu_per_hour * active_daily_hours * 30.5
             serverless_dbu_per_hour = total_cores * self.DBU_RATE_SERVERLESS
-            serverless_monthly_dbus = (
-                serverless_dbu_per_hour * active_daily_hours * 30.5
-            )
+            serverless_monthly_dbus = serverless_dbu_per_hour * active_daily_hours * 30.5
 
         if serverless_monthly_dbus < classic_monthly_dbus:
             rec_tier = "Serverless DLT"
@@ -127,9 +125,7 @@ class CostDoctor:
             )
 
         return DbuCostForecast(
-            workload_type="Continuous Streaming"
-            if is_continuous_streaming
-            else "Triggered Batch",
+            workload_type="Continuous Streaming" if is_continuous_streaming else "Triggered Batch",
             daily_ingestion_gb=round(daily_gb, 2),
             recommended_cluster=profile,
             classic_dlt_dbus_per_hour=round(classic_dbu_per_hour, 2),

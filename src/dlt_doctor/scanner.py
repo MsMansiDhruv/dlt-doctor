@@ -102,18 +102,10 @@ class DirectoryAuditReport:
         ]
 
         for report in self.file_reports:
-            crit = sum(
-                1 for f in report.findings if f.severity == DiagnosticSeverity.CRITICAL
-            )
-            high = sum(
-                1 for f in report.findings if f.severity == DiagnosticSeverity.HIGH
-            )
-            med = sum(
-                1 for f in report.findings if f.severity == DiagnosticSeverity.MEDIUM
-            )
-            low = sum(
-                1 for f in report.findings if f.severity == DiagnosticSeverity.LOW
-            )
+            crit = sum(1 for f in report.findings if f.severity == DiagnosticSeverity.CRITICAL)
+            high = sum(1 for f in report.findings if f.severity == DiagnosticSeverity.HIGH)
+            med = sum(1 for f in report.findings if f.severity == DiagnosticSeverity.MEDIUM)
+            low = sum(1 for f in report.findings if f.severity == DiagnosticSeverity.LOW)
             lines.append(
                 f"| `{report.pipeline_name}` | {report.overall_health_score} | {crit} | {high} | {med} | {low} |"
             )
@@ -138,7 +130,13 @@ class DirectoryAuditReport:
         rules_map: dict[str, dict] = {}
 
         for file_name, f in self.all_findings:
-            sev_level = "error" if f.severity in {DiagnosticSeverity.CRITICAL, DiagnosticSeverity.HIGH} else "warning" if f.severity == DiagnosticSeverity.MEDIUM else "note"
+            sev_level = (
+                "error"
+                if f.severity in {DiagnosticSeverity.CRITICAL, DiagnosticSeverity.HIGH}
+                else "warning"
+                if f.severity == DiagnosticSeverity.MEDIUM
+                else "note"
+            )
             if f.rule_id not in rules_map:
                 rules_map[f.rule_id] = {
                     "id": f.rule_id,
@@ -151,19 +149,25 @@ class DirectoryAuditReport:
             if isinstance(start_line, str):
                 start_line = 1
 
-            results.append({
-                "ruleId": f.rule_id,
-                "level": sev_level,
-                "message": {"text": f"{f.title}: {f.impact_summary}"},
-                "locations": [
-                    {
-                        "physicalLocation": {
-                            "artifactLocation": {"uri": file_name},
-                            "region": {"startLine": int(start_line) if isinstance(start_line, (int, float)) else 1},
+            results.append(
+                {
+                    "ruleId": f.rule_id,
+                    "level": sev_level,
+                    "message": {"text": f"{f.title}: {f.impact_summary}"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": file_name},
+                                "region": {
+                                    "startLine": int(start_line)
+                                    if isinstance(start_line, (int, float))
+                                    else 1
+                                },
+                            }
                         }
-                    }
-                ],
-            })
+                    ],
+                }
+            )
 
         sarif_obj = {
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -206,7 +210,9 @@ class DirectoryAuditReport:
 
         advisor = AdvisorDoctor()
         for report in self.file_reports:
-            blocks.append(f"<div style='margin-bottom: 24px;'>{advisor.to_databricks_html(report)}</div>")
+            blocks.append(
+                f"<div style='margin-bottom: 24px;'>{advisor.to_databricks_html(report)}</div>"
+            )
 
         blocks.append("</body></html>")
         return "\n".join(blocks)
@@ -244,9 +250,7 @@ class DirectoryScanner:
 
         return sorted(files)
 
-    def scan_directory(
-        self, root: Path | str, recursive: bool = True
-    ) -> DirectoryAuditReport:
+    def scan_directory(self, root: Path | str, recursive: bool = True) -> DirectoryAuditReport:
         """Scan all pipelines in directory and compile a consolidated report."""
         files = self.discover_files(root, recursive=recursive)
         file_reports: list[PipelineAuditReport] = []
@@ -267,12 +271,20 @@ class DirectoryScanner:
                                 cell.source_code, config=self.config, file_name=file_path.name
                             )
                             for f in cell_findings:
-                                f.line_number = f"Cell {cell.cell_index}, line {f.line_number}" if f.line_number else f"Cell {cell.cell_index}"
+                                f.line_number = (
+                                    f"Cell {cell.cell_index}, line {f.line_number}"
+                                    if f.line_number
+                                    else f"Cell {cell.cell_index}"
+                                )
                                 findings.append(f)
                         elif cell.cell_type == "sql":
                             sql_findings = audit_sql_source(cell.source_code, config=self.config)
                             for f in sql_findings:
-                                f.line_number = f"Cell {cell.cell_index}, line {f.line_number}" if f.line_number else f"Cell {cell.cell_index}"
+                                f.line_number = (
+                                    f"Cell {cell.cell_index}, line {f.line_number}"
+                                    if f.line_number
+                                    else f"Cell {cell.cell_index}"
+                                )
                                 findings.append(f)
                 else:
                     # Python source file or Databricks source notebook
@@ -284,12 +296,22 @@ class DirectoryScanner:
                                     cell.source_code, config=self.config, file_name=file_path.name
                                 )
                                 for f in cell_findings:
-                                    f.line_number = f"Cell {cell.cell_index}, line {f.line_number}" if f.line_number else f"Cell {cell.cell_index}"
+                                    f.line_number = (
+                                        f"Cell {cell.cell_index}, line {f.line_number}"
+                                        if f.line_number
+                                        else f"Cell {cell.cell_index}"
+                                    )
                                     findings.append(f)
                             elif cell.cell_type == "sql":
-                                sql_findings = audit_sql_source(cell.source_code, config=self.config)
+                                sql_findings = audit_sql_source(
+                                    cell.source_code, config=self.config
+                                )
                                 for f in sql_findings:
-                                    f.line_number = f"Cell {cell.cell_index}, line {f.line_number}" if f.line_number else f"Cell {cell.cell_index}"
+                                    f.line_number = (
+                                        f"Cell {cell.cell_index}, line {f.line_number}"
+                                        if f.line_number
+                                        else f"Cell {cell.cell_index}"
+                                    )
                                     findings.append(f)
                     else:
                         code = file_path.read_text(encoding="utf-8")

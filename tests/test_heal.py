@@ -61,7 +61,7 @@ def complex_pipeline():
     result = auto_heal_source(input_code)
     assert result.can_heal is True
     assert "def complex_pipeline_raw():" in result.healed_code
-    assert "df = df.filter(\"active = true\")" in result.healed_code
+    assert 'df = df.filter("active = true")' in result.healed_code
     assert "def complex_pipeline():" in result.healed_code
     assert "def complex_pipeline_quarantine():" in result.healed_code
 
@@ -125,8 +125,8 @@ def silver_orders():
 """
     result = auto_heal_source(input_code)
     assert result.can_heal is True
-    assert "df = dlt.read_stream(\"bronze_orders\")" in result.healed_code
-    assert "df = df.filter(\"active = true\")" in result.healed_code
+    assert 'df = dlt.read_stream("bronze_orders")' in result.healed_code
+    assert 'df = df.filter("active = true")' in result.healed_code
     assert '@dlt.expect("non_negative_qty", "qty >= 0")' in result.healed_code
     assert '@dlt.expect_or_fail("valid_id", "id IS NOT NULL")' in result.healed_code
     assert "expect_or_drop" not in result.healed_code
@@ -194,7 +194,9 @@ def test_auto_heal_clean_and_quarantine_partition_on_nulls() -> None:
     expected_quarantine = [r for r in records if r["amount"] is None or r["amount"] <= 0]
 
     assert len(expected_clean) + len(expected_quarantine) == len(records)
-    assert set(r["id"] for r in expected_clean).isdisjoint(set(r["id"] for r in expected_quarantine))
+    assert set(r["id"] for r in expected_clean).isdisjoint(
+        set(r["id"] for r in expected_quarantine)
+    )
 
 
 @pytest.mark.integration
@@ -223,16 +225,13 @@ def test_pyspark_integration_healed_pipeline_execution() -> None:
     df_staged = df_raw.select(
         "*",
         F.array_compact(
-            F.array(
-                F.when(~F.expr("coalesce((amount > 0), false)"), F.lit("valid_amt"))
-            )
+            F.array(F.when(~F.expr("coalesce((amount > 0), false)"), F.lit("valid_amt")))
         ).alias("_failed_rules"),
         F.current_timestamp().alias("_quarantined_at"),
     )
 
-    df_clean = (
-        df_staged.filter(F.size(F.col("_failed_rules")) == 0)
-        .drop("_failed_rules", "_quarantined_at")
+    df_clean = df_staged.filter(F.size(F.col("_failed_rules")) == 0).drop(
+        "_failed_rules", "_quarantined_at"
     )
 
     df_quarantine = df_staged.filter(F.size(F.col("_failed_rules")) > 0)
@@ -244,5 +243,3 @@ def test_pyspark_integration_healed_pipeline_execution() -> None:
     assert quarantine_ids == {2, 3, 4}
     assert clean_ids.union(quarantine_ids) == {1, 2, 3, 4, 5}
     assert clean_ids.isdisjoint(quarantine_ids)
-
-

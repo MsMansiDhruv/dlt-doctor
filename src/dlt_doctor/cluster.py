@@ -12,9 +12,7 @@ class ColumnProfile:
     name: str
     data_type: str
     distinct_count: int
-    filter_frequency_score: float = (
-        0.0  # 0.0 to 1.0 (frequency in query WHERE/JOIN clauses)
-    )
+    filter_frequency_score: float = 0.0  # 0.0 to 1.0 (frequency in query WHERE/JOIN clauses)
     is_monotonically_increasing: bool = False
 
 
@@ -67,8 +65,7 @@ class ClusterDoctor:
 
             # 3. Reject complex or large binary types
             if any(
-                t in col.data_type.lower()
-                for t in ("array", "map", "struct", "binary", "blob")
+                t in col.data_type.lower() for t in ("array", "map", "struct", "binary", "blob")
             ):
                 rejected.append(
                     (

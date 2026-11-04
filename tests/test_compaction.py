@@ -20,9 +20,7 @@ def test_compaction_doctor_detects_small_file_debt() -> None:
     assert report.small_file_pct == 80.0
     assert report.total_files == 25
     assert "OPTIMIZE main.silver.orders" in report.recommended_optimize_sql
-    assert (
-        "delta.autoOptimize.autoCompact = true" in report.recommended_tblproperties_sql
-    )
+    assert "delta.autoOptimize.autoCompact = true" in report.recommended_tblproperties_sql
 
 
 def test_compaction_doctor_healthy_table() -> None:

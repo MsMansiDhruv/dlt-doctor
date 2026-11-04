@@ -120,7 +120,11 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                     if len(dec.args) >= 2:
                         rule_arg = dec.args[0]
                         cond_arg = dec.args[1]
-                        rule_name = str(rule_arg.value) if isinstance(rule_arg, ast.Constant) else "expectation"
+                        rule_name = (
+                            str(rule_arg.value)
+                            if isinstance(rule_arg, ast.Constant)
+                            else "expectation"
+                        )
                         if isinstance(cond_arg, ast.Constant) and isinstance(cond_arg.value, str):
                             cond_sql = cond_arg.value
                             expectation_conditions.append((rule_name, cond_sql))
@@ -136,7 +140,13 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                         self._emit_dd003(node, var_repr, lineno)
 
                     if dec_name == "expect_or_drop":
-                        self._emit_dd001(node, table_name, is_regulated, rule_name if len(dec.args) >= 2 else "expect_or_drop", lineno)
+                        self._emit_dd001(
+                            node,
+                            table_name,
+                            is_regulated,
+                            rule_name if len(dec.args) >= 2 else "expect_or_drop",
+                            lineno,
+                        )
 
             elif (
                 dec_name in {"expect_all", "expect_all_or_drop", "expect_all_or_fail"}
@@ -207,7 +217,9 @@ class ExpectationAstVisitor(ast.NodeVisitor):
         if node.decorator_list:
             first_line = min(getattr(d, "lineno", node.lineno) for d in node.decorator_list)
         start_line = max(0, first_line - 4)
-        end_line = min(len(self.source_lines), getattr(node, "end_lineno", node.lineno) or node.lineno)
+        end_line = min(
+            len(self.source_lines), getattr(node, "end_lineno", node.lineno) or node.lineno
+        )
         return any(comment in self.source_lines[i] for i in range(start_line, end_line))
 
     def _emit_dd001(
@@ -292,11 +304,7 @@ class ExpectationAstVisitor(ast.NodeVisitor):
         for r_name, cond in self.all_expectation_conditions:
             try:
                 parsed = sqlglot.parse_one(cond, read="spark")
-                cols = {
-                    c.name.lower()
-                    for c in parsed.find_all(sqlglot.exp.Column)
-                    if c.name
-                }
+                cols = {c.name.lower() for c in parsed.find_all(sqlglot.exp.Column) if c.name}
                 if cols:
                     parsed_exps.append((r_name, cond, parsed, cols))
                     all_cols.update(cols)
@@ -322,9 +330,7 @@ class ExpectationAstVisitor(ast.NodeVisitor):
                 continue
 
             filter_cols = {
-                c.name.lower()
-                for c in parsed_filter.find_all(sqlglot.exp.Column)
-                if c.name
+                c.name.lower() for c in parsed_filter.find_all(sqlglot.exp.Column) if c.name
             }
             matching_cols = filter_cols.intersection(all_cols)
             if not matching_cols:

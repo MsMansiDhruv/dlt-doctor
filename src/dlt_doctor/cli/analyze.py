@@ -66,9 +66,7 @@ def handle(args: argparse.Namespace) -> int:
         return 0
 
     config = load_config(target)
-    fail_on_sev = (
-        DiagnosticSeverity(args.fail_on) if args.fail_on else config.fail_on
-    )
+    fail_on_sev = DiagnosticSeverity(args.fail_on) if args.fail_on else config.fail_on
 
     advisor = AdvisorDoctor()
     scanner = DirectoryScanner(config=config)
@@ -136,9 +134,7 @@ def handle(args: argparse.Namespace) -> int:
                     findings.append(f)
     else:
         content = target.read_text(encoding="utf-8")
-        findings = doctor.analyze_source_code(
-            content, config=config, file_name=target.name
-        )
+        findings = doctor.analyze_source_code(content, config=config, file_name=target.name)
 
     report = advisor.compile_report(target.name, findings)
 
@@ -148,6 +144,7 @@ def handle(args: argparse.Namespace) -> int:
         print(advisor.to_databricks_html(report))
     elif args.format == "json":
         import json
+
         print(json.dumps(report.to_dict(), indent=2))
     elif args.format == "sarif":
         dir_rep = DirectoryAuditReport(

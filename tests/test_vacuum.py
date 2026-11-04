@@ -7,14 +7,10 @@ from dlt_doctor.vacuum import VacuumDoctor, VacuumSafetyLevel
 
 def test_vacuum_safe_default():
     doctor = VacuumDoctor()
-    report = doctor.evaluate_vacuum_safety(
-        "main.silver.orders", requested_retention_hours=168
-    )
+    report = doctor.evaluate_vacuum_safety("main.silver.orders", requested_retention_hours=168)
     assert report.safety_level == VacuumSafetyLevel.SAFE
     assert report.safe_retention_hours == 168
-    assert (
-        "VACUUM main.silver.orders RETAIN 168 HOURS;" in report.recommended_vacuum_sql
-    )
+    assert "VACUUM main.silver.orders RETAIN 168 HOURS;" in report.recommended_vacuum_sql
 
 
 def test_vacuum_dangerous_low_retention_with_active_readers():

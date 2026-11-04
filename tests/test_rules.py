@@ -1,6 +1,5 @@
 """Tests for rule registry and rules DD001, DD002, DD003."""
 
-
 from dlt_doctor.catalyst import DiagnosticSeverity, PlanDoctor
 from dlt_doctor.expectations_rules import audit_sql_source
 from dlt_doctor.rules import get_rule, list_rules, rule_exists
@@ -11,10 +10,23 @@ def test_rule_registry_contains_all_rules() -> None:
     assert len(rules) >= 15
     rule_ids = {r.id for r in rules}
     expected_ids = {
-        "PYSPARK-001", "PYSPARK-002", "PYSPARK-004", "PYSPARK-005", "PYSPARK-006",
-        "SYNTAX-001", "PLAN-001", "PLAN-002", "PLAN-003", "PLAN-004",
-        "UC-001", "UC-002", "UC-003", "UC-004",
-        "DD001", "DD002", "DD003",
+        "PYSPARK-001",
+        "PYSPARK-002",
+        "PYSPARK-004",
+        "PYSPARK-005",
+        "PYSPARK-006",
+        "SYNTAX-001",
+        "PLAN-001",
+        "PLAN-002",
+        "PLAN-003",
+        "PLAN-004",
+        "UC-001",
+        "UC-002",
+        "UC-003",
+        "UC-004",
+        "DD001",
+        "DD002",
+        "DD003",
     }
     assert expected_ids.issubset(rule_ids)
 
@@ -181,7 +193,7 @@ def dlq():
     dd002 = [f for f in findings if f.rule_id == "DD002"]
     assert len(dd002) == 1
     rec = dd002[0].recommendation
-    assert ("coalesce(NOT (" in rec or "OR amount IS NULL" in rec)
+    assert "coalesce(NOT (" in rec or "OR amount IS NULL" in rec
 
 
 def test_dd002_flags_syntactic_complement_in_unnamed_table() -> None:
@@ -223,7 +235,6 @@ def orders_quarantine():
     findings = doctor.analyze_source_code(code)
     dd002 = [f for f in findings if f.rule_id == "DD002"]
     assert len(dd002) == 0
-
 
 
 def test_dd003_static_vs_dynamic_expectations() -> None:
@@ -310,7 +321,9 @@ def widgets():
     dd001 = [f for f in findings if f.rule_id == "DD001"]
     assert len(dd001) == 1
     # Regulated tables must elevate DD001 severity to HIGH
-    assert dd001[0].severity == DiagnosticSeverity.HIGH, f"Expected HIGH severity for regulated table, got {dd001[0].severity}"
+    assert dd001[0].severity == DiagnosticSeverity.HIGH, (
+        f"Expected HIGH severity for regulated table, got {dd001[0].severity}"
+    )
 
 
 def test_dd004_nondeterministic_functions_in_expectations() -> None:

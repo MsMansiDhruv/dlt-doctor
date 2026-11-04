@@ -139,16 +139,10 @@ class WorkspaceInspector:
             try:
                 clustering = json.loads(clustering)
             except Exception:
-                clustering = [
-                    c.strip() for c in clustering.strip("[]").split(",") if c.strip()
-                ]
+                clustering = [c.strip() for c in clustering.strip("[]").split(",") if c.strip()]
         partitions = detail.get("partitionColumns") or []
 
-        avg_mb = (
-            (size_in_bytes / (1024 * 1024 * max(1, num_files)))
-            if num_files > 0
-            else 0.0
-        )
+        avg_mb = (size_in_bytes / (1024 * 1024 * max(1, num_files))) if num_files > 0 else 0.0
 
         # Run Compaction diagnosis
         sample_count = min(100, max(1, num_files))
@@ -173,9 +167,7 @@ class WorkspaceInspector:
             cdf_enabled=True,
         )
 
-        debt_label = (
-            "HIGH (Compaction Debt)" if compaction.has_compaction_debt else "OPTIMAL"
-        )
+        debt_label = "HIGH (Compaction Debt)" if compaction.has_compaction_debt else "OPTIMAL"
         optimize_sql = compaction.recommended_optimize_sql
         if clustering:
             cluster_cols = ", ".join(clustering)

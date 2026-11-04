@@ -41,13 +41,9 @@ class AdvisorDoctor:
         low_weight: int = 2,
     ) -> PipelineAuditReport:
         """Compile raw findings into a scored audit report based on severity-weighted penalties."""
-        critical_count = sum(
-            1 for f in findings if f.severity == DiagnosticSeverity.CRITICAL
-        )
+        critical_count = sum(1 for f in findings if f.severity == DiagnosticSeverity.CRITICAL)
         high_count = sum(1 for f in findings if f.severity == DiagnosticSeverity.HIGH)
-        medium_count = sum(
-            1 for f in findings if f.severity == DiagnosticSeverity.MEDIUM
-        )
+        medium_count = sum(1 for f in findings if f.severity == DiagnosticSeverity.MEDIUM)
         low_count = sum(1 for f in findings if f.severity == DiagnosticSeverity.LOW)
 
         # Base score 100, deduct based on documented severity weights
@@ -89,9 +85,7 @@ class AdvisorDoctor:
 
         for f in report.findings:
             line_str = str(f.line_number) if f.line_number else "-"
-            lines.append(
-                f"| `{f.rule_id}` | `{f.severity.value}` | {f.title} | {line_str} |"
-            )
+            lines.append(f"| `{f.rule_id}` | `{f.severity.value}` | {f.title} | {line_str} |")
 
         lines.extend(
             [

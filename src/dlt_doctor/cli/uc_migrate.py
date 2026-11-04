@@ -15,7 +15,9 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p.add_argument("path", help="Path to Python or SQL file to audit for Unity Catalog")
     p.add_argument("--catalog", default="main", help="Target Unity Catalog name (default: main)")
-    p.add_argument("--schema", default="bronze", help="Target Unity Catalog schema (default: bronze)")
+    p.add_argument(
+        "--schema", default="bronze", help="Target Unity Catalog schema (default: bronze)"
+    )
 
 
 def handle(args: argparse.Namespace) -> int:

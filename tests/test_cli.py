@@ -8,9 +8,7 @@ from dlt_doctor.cli import main
 
 def test_cli_analyze_clean_file(tmp_path: Path) -> None:
     test_file = tmp_path / "clean_pipeline.py"
-    test_file.write_text(
-        "df = spark.table('orders').select('id', 'amount')", encoding="utf-8"
-    )
+    test_file.write_text("df = spark.table('orders').select('id', 'amount')", encoding="utf-8")
 
     test_args = ["dlt-doctor", "analyze", str(test_file)]
     with patch("sys.argv", test_args):
@@ -203,13 +201,7 @@ def test_cli_analyze_notebook(tmp_path: Path) -> None:
 
     nb_file = tmp_path / "orders.ipynb"
     nb_file.write_text(
-        json.dumps(
-            {
-                "cells": [
-                    {"cell_type": "code", "source": ["df = spark.table('orders')\n"]}
-                ]
-            }
-        ),
+        json.dumps({"cells": [{"cell_type": "code", "source": ["df = spark.table('orders')\n"]}]}),
         encoding="utf-8",
     )
 

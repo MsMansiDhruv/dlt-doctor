@@ -37,9 +37,7 @@ class SkewDoctor:
 
         ratio = round(max_count / median_count, 2)
         skewed_keys = [
-            k
-            for k, v in key_counts.items()
-            if (v / median_count) >= skew_ratio_threshold
+            k for k, v in key_counts.items() if (v / median_count) >= skew_ratio_threshold
         ]
 
         has_skew = ratio >= skew_ratio_threshold
@@ -48,9 +46,7 @@ class SkewDoctor:
         recommended_configs = {
             "spark.sql.adaptive.enabled": "true",
             "spark.sql.adaptive.skewJoin.enabled": "true",
-            "spark.sql.adaptive.skewJoin.skewedPartitionFactor": str(
-                int(skew_ratio_threshold)
-            ),
+            "spark.sql.adaptive.skewJoin.skewedPartitionFactor": str(int(skew_ratio_threshold)),
             "spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes": "67108864",  # 64MB
         }
 

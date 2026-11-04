@@ -43,7 +43,10 @@ def test_reproduce_null_safe_quarantine_routing_gap():
     rules = [ExpectationRule(rule_name="valid_amount", condition_sql="amount > 0")]
     plan = doctor.build_quarantine_routing("silver_orders", rules)
     assert "coalesce((amount > 0), false)" in plan.valid_filter_sql
-    assert "NOT (coalesce((amount > 0), false))" in plan.invalid_filter_sql or "NOT (" in plan.invalid_filter_sql
+    assert (
+        "NOT (coalesce((amount > 0), false))" in plan.invalid_filter_sql
+        or "NOT (" in plan.invalid_filter_sql
+    )
 
 
 def test_reproduce_duplicate_udf_finding():
@@ -59,7 +62,9 @@ def clean_text(s):
     doctor = PlanDoctor()
     findings = doctor.analyze_source_code(code)
     udf_findings = [f for f in findings if f.rule_id == "PYSPARK-001"]
-    assert len(udf_findings) == 1, f"Expected exactly 1 PYSPARK-001 finding, got {len(udf_findings)}"
+    assert len(udf_findings) == 1, (
+        f"Expected exactly 1 PYSPARK-001 finding, got {len(udf_findings)}"
+    )
 
 
 def test_reproduce_withcolumn_cascade_duplicates():
@@ -77,7 +82,9 @@ df = (
     doctor = PlanDoctor()
     findings = doctor.analyze_source_code(code)
     cascade_findings = [f for f in findings if f.rule_id == "PYSPARK-002"]
-    assert len(cascade_findings) == 1, f"Expected exactly 1 PYSPARK-002 finding for the chain, got {len(cascade_findings)}"
+    assert len(cascade_findings) == 1, (
+        f"Expected exactly 1 PYSPARK-002 finding for the chain, got {len(cascade_findings)}"
+    )
 
 
 def test_reproduce_notebook_sql_cell_syntax_crash():
@@ -85,16 +92,14 @@ def test_reproduce_notebook_sql_cell_syntax_crash():
     leaving SQL body to reach ast.parse and failing with SYNTAX-001.
     """
     import json
+
     notebook_content = {
         "cells": [
             {
                 "cell_type": "code",
-                "source": ["%sql\n", "SELECT * FROM bronze_orders WHERE amount > 0;\n"]
+                "source": ["%sql\n", "SELECT * FROM bronze_orders WHERE amount > 0;\n"],
             },
-            {
-                "cell_type": "code",
-                "source": ["df = spark.read.table('silver_orders')\n"]
-            }
+            {"cell_type": "code", "source": ["df = spark.read.table('silver_orders')\n"]},
         ]
     }
     with tempfile.NamedTemporaryFile("w", suffix=".ipynb", delete=False, encoding="utf-8") as f:
@@ -104,10 +109,10 @@ def test_reproduce_notebook_sql_cell_syntax_crash():
     try:
         scanner = DirectoryScanner()
         report = scanner.scan_directory(temp_path)
-        syntax_findings = [
-            f for _, f in report.all_findings if f.rule_id == "SYNTAX-001"
-        ]
-        assert len(syntax_findings) == 0, f"Expected no SYNTAX-001 crash on notebook with %sql, got: {syntax_findings}"
+        syntax_findings = [f for _, f in report.all_findings if f.rule_id == "SYNTAX-001"]
+        assert len(syntax_findings) == 0, (
+            f"Expected no SYNTAX-001 crash on notebook with %sql, got: {syntax_findings}"
+        )
     finally:
         Path(temp_path).unlink(missing_ok=True)
 
@@ -115,13 +120,17 @@ def test_reproduce_notebook_sql_cell_syntax_crash():
 def test_reproduce_load_ipython_extension_export():
     """Bug: %load_ext dlt_doctor fails because load_ipython_extension is not exported from dlt_doctor root."""
     import dlt_doctor
-    assert hasattr(dlt_doctor, "load_ipython_extension"), "load_ipython_extension not exported from dlt_doctor"
+
+    assert hasattr(dlt_doctor, "load_ipython_extension"), (
+        "load_ipython_extension not exported from dlt_doctor"
+    )
 
 
 def test_reproduce_sql_file_scan_crash():
     """Bug: analyze on .sql file runs ast.parse and fails with SYNTAX-001."""
     # When analyzing a SQL file directly
     from dlt_doctor.cli import build_parser
+
     parser = build_parser()
     args = parser.parse_args(["analyze", "dummy.sql"])
     assert hasattr(args, "path")
@@ -130,7 +139,9 @@ def test_reproduce_sql_file_scan_crash():
     findings = doctor.analyze_source_code("SELECT * FROM silver_orders;")
     # It must not report SYNTAX-001 on valid SQL when SQL is supported
     syntax_errors = [f for f in findings if f.rule_id == "SYNTAX-001"]
-    assert len(syntax_errors) == 0, f"SQL was parsed with Python ast and produced SYNTAX-001: {syntax_errors}"
+    assert len(syntax_errors) == 0, (
+        f"SQL was parsed with Python ast and produced SYNTAX-001: {syntax_errors}"
+    )
 
 
 def test_reproduce_uc003_false_positive_on_dlt_read():
@@ -146,7 +157,9 @@ def silver_orders():
 """
     uc = UcDoctor()
     findings = uc.audit_code(code)
-    assert len(findings) == 0, f"Expected no UC findings for idiomatic dlt.read_stream, got: {findings}"
+    assert len(findings) == 0, (
+        f"Expected no UC findings for idiomatic dlt.read_stream, got: {findings}"
+    )
 
 
 def test_reproduce_generated_quarantine_code_syntax():
@@ -158,6 +171,7 @@ def test_reproduce_generated_quarantine_code_syntax():
     plan = doctor.build_quarantine_routing("main.silver.orders", rules)
     code = doctor.generate_dlt_decorator_code(plan)
     import ast
+
     try:
         ast.parse(code)
     except SyntaxError as e:
@@ -189,6 +203,7 @@ def test_reproduce_html_escape_in_advisor():
 def test_reproduce_cdc_scd2_placeholder_invalid_sql():
     """Bug: SCD2 merge SQL contains literal '...' placeholders that cannot parse as valid SQL."""
     import sqlglot
+
     cdc = CdcDoctor()
     tmpl = cdc.generate_cdc_templates("silver_customers", ["id"], "updated_at")
     assert tmpl.scd2_merge_sql != ""
@@ -202,7 +217,9 @@ def test_reproduce_cdc_scd2_placeholder_invalid_sql():
 def test_reproduce_restate_missing_delete_unmatched():
     """Bug: restate SQL lacks WHEN NOT MATCHED BY SOURCE ... THEN DELETE."""
     reconciler = RestatementDoctor()
-    scope = reconciler.calculate_blast_radius("silver_orders", "2026-11-01", 7, delete_unmatched=True)
+    scope = reconciler.calculate_blast_radius(
+        "silver_orders", "2026-11-01", 7, delete_unmatched=True
+    )
     assert "WHEN NOT MATCHED BY SOURCE" in scope.delta_merge_sql, (
         f"Restatement SQL missing WHEN NOT MATCHED BY SOURCE: {scope.delta_merge_sql}"
     )
@@ -211,6 +228,7 @@ def test_reproduce_restate_missing_delete_unmatched():
 def test_reproduce_auto_heal_cli_flag():
     """Bug: analyze CLI has no --fix / heal command."""
     from dlt_doctor.cli import build_parser
+
     parser = build_parser()
     # Check if heal subcommand exists or analyze --fix exists
     subcommands = parser._subparsers._actions[1].choices

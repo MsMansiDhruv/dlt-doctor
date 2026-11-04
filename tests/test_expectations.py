@@ -30,10 +30,10 @@ def test_three_valued_logic_completeness() -> None:
     valid union quarantine = all_records, and valid intersect quarantine is empty.
     """
     records = [
-        {"amount": 100, "status": "A"},    # passes
-        {"amount": None, "status": "A"},   # NULL amount -> fails
-        {"amount": -5, "status": "A"},     # amount <= 0 -> fails
-        {"amount": 50, "status": None},    # NULL status -> fails
+        {"amount": 100, "status": "A"},  # passes
+        {"amount": None, "status": "A"},  # NULL amount -> fails
+        {"amount": -5, "status": "A"},  # amount <= 0 -> fails
+        {"amount": 50, "status": None},  # NULL status -> fails
         {"amount": None, "status": None},  # both NULL -> fails
     ]
 

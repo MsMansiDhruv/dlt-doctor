@@ -24,7 +24,9 @@ class DoctorConfig:
     select: list[str] = field(default_factory=list)
     ignore: list[str] = field(default_factory=list)
     fail_on: DiagnosticSeverity = DiagnosticSeverity.CRITICAL
-    regulated_tables: list[str] = field(default_factory=lambda: ["*orders*", "*customers*", "*txn*", "*finance*"])
+    regulated_tables: list[str] = field(
+        default_factory=lambda: ["*orders*", "*customers*", "*txn*", "*finance*"]
+    )
     per_file_ignores: dict[str, list[str]] = field(default_factory=dict)
     severity_overrides: dict[str, DiagnosticSeverity] = field(default_factory=dict)
 

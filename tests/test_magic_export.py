@@ -9,7 +9,6 @@ def test_import_dlt_doctor_does_not_eagerly_load_connect() -> None:
     sys.modules.pop("dlt_doctor", None)
     sys.modules.pop("dlt_doctor.connect", None)
 
-
     import dlt_doctor as doc
 
     assert doc is not None
@@ -28,11 +27,13 @@ def test_load_ipython_extension_registered_on_fake_ipython() -> None:
             self.registered: list[dict[str, Any]] = []
 
         def register_magic_function(self, func: Any, magic_kind: str, magic_name: str) -> None:
-            self.registered.append({
-                "func": func,
-                "magic_kind": magic_kind,
-                "magic_name": magic_name,
-            })
+            self.registered.append(
+                {
+                    "func": func,
+                    "magic_kind": magic_kind,
+                    "magic_name": magic_name,
+                }
+            )
 
     fake_shell = FakeIPython()
     dlt_doctor.load_ipython_extension(fake_shell)

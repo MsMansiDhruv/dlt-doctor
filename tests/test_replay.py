@@ -80,15 +80,21 @@ def test_execute_replay_sql_on_pyspark() -> None:
             SparkSession.builder.master("local[1]")
             .appName("ReplayTest")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config(
+                "spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+            )
             .getOrCreate()
         )
     except Exception as exc:
         pytest.skip(f"Local PySpark/JVM not available: {exc}")
 
     try:
-        spark.sql("CREATE TABLE IF NOT EXISTS default.test_tgt (id INT, amt DOUBLE, updated_at TIMESTAMP, _replayed_at TIMESTAMP) USING DELTA")
-        spark.sql("CREATE TABLE IF NOT EXISTS default.test_quarantine (id INT, amt DOUBLE, updated_at TIMESTAMP, _failed_rules ARRAY<STRING>, _quarantined_at TIMESTAMP) USING DELTA")
+        spark.sql(
+            "CREATE TABLE IF NOT EXISTS default.test_tgt (id INT, amt DOUBLE, updated_at TIMESTAMP, _replayed_at TIMESTAMP) USING DELTA"
+        )
+        spark.sql(
+            "CREATE TABLE IF NOT EXISTS default.test_quarantine (id INT, amt DOUBLE, updated_at TIMESTAMP, _failed_rules ARRAY<STRING>, _quarantined_at TIMESTAMP) USING DELTA"
+        )
         sql = generate_replay_sql(
             quarantine_table="default.test_quarantine",
             target_table="default.test_tgt",

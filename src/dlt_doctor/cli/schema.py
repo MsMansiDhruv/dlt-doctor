@@ -47,7 +47,9 @@ def handle(args: argparse.Namespace) -> int:
     if report.changes:
         print("\nDetected Schema Changes:")
         for c in report.changes:
-            print(f"  - [{c.severity.value}] {c.column_name}: {c.existing_type} -> {c.incoming_type} ({c.description})")
+            print(
+                f"  - [{c.severity.value}] {c.column_name}: {c.existing_type} -> {c.incoming_type} ({c.description})"
+            )
     else:
         print("No schema changes detected.")
 

@@ -33,7 +33,9 @@ def handle(args: argparse.Namespace) -> int:
     print(f"Daily Ingestion:           {forecast.daily_ingestion_gb:.1f} GB")
     print(f"Recommended Tier:          {forecast.recommended_tier}")
     print(f"Recommended Driver:        {forecast.recommended_cluster.driver_node_type}")
-    print(f"Recommended Workers:       {forecast.recommended_cluster.worker_node_type} (min: {forecast.recommended_cluster.min_workers}, max: {forecast.recommended_cluster.max_workers})")
+    print(
+        f"Recommended Workers:       {forecast.recommended_cluster.worker_node_type} (min: {forecast.recommended_cluster.min_workers}, max: {forecast.recommended_cluster.max_workers})"
+    )
     print(f"Serverless DLT DBUs/hr:    {forecast.serverless_dlt_dbus_per_hour:.2f}")
     print(f"Classic DLT DBUs/hr:       {forecast.classic_dlt_dbus_per_hour:.2f}")
     print("-" * 70)

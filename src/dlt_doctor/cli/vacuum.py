@@ -25,9 +25,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default=0,
         help="Active streaming reader queries (default: 0)",
     )
-    p.add_argument(
-        "--cdf", action="store_true", help="Whether Change Data Feed (CDF) is enabled"
-    )
+    p.add_argument("--cdf", action="store_true", help="Whether Change Data Feed (CDF) is enabled")
 
 
 def handle(args: argparse.Namespace) -> int:
