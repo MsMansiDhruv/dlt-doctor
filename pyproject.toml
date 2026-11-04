@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dlt-doctor"
-version = "0.4.2"
+version = "0.5.0.dev0"
 description = "Production optimization engine and quality accelerator for Databricks Delta Live Tables, Auto Loader, and PySpark pipelines"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,6 +39,11 @@ dlt-doctor = "dlt_doctor.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["dlt_doctor*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (requiring pyspark or local environment)"
+]
 
 [tool.ruff]
 target-version = "py311"
