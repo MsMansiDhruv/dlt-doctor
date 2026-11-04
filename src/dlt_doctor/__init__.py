@@ -34,7 +34,10 @@ from dlt_doctor.expectations import (
     QuarantineRoutingPlan,
 )
 from dlt_doctor.history import HistoryDoctor, LogVelocityReport
+from dlt_doctor.magic import audit_code_cell
+from dlt_doctor.notebook import extract_notebook_code, is_notebook_file
 from dlt_doctor.reconciler import BlastRadiusScope, RestatementDoctor
+from dlt_doctor.scanner import DirectoryAuditReport, DirectoryScanner
 from dlt_doctor.schema import (
     SchemaChange,
     SchemaDoctor,
@@ -55,9 +58,14 @@ from dlt_doctor.vacuum import (
     VacuumSafetyReport,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
+    "DirectoryScanner",
+    "DirectoryAuditReport",
+    "extract_notebook_code",
+    "is_notebook_file",
+    "audit_code_cell",
     "PlanDoctor",
     "DiagnosticFinding",
     "DiagnosticSeverity",

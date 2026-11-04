@@ -184,3 +184,36 @@ def test_cli_checkpoint() -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
+
+
+def test_cli_analyze_directory(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pipelines"
+    pipeline_dir.mkdir()
+    (pipeline_dir / "p1.py").write_text("df = spark.table('t1')", encoding="utf-8")
+    (pipeline_dir / "p2.py").write_text("df = spark.table('t2')", encoding="utf-8")
+
+    test_args = ["dlt-doctor", "analyze", str(pipeline_dir)]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_analyze_notebook(tmp_path: Path) -> None:
+    import json
+
+    nb_file = tmp_path / "orders.ipynb"
+    nb_file.write_text(
+        json.dumps(
+            {
+                "cells": [
+                    {"cell_type": "code", "source": ["df = spark.table('orders')\n"]}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    test_args = ["dlt-doctor", "analyze", str(nb_file)]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0

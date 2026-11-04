@@ -11,7 +11,7 @@
 [![Storage](https://img.shields.io/badge/Storage-Delta%20Lake%20%26%20CDF-2EE6A7?style=for-the-badge&logo=delta&logoColor=white)](https://delta.io/)
 [![Governance](https://img.shields.io/badge/Governance-Unity%20Catalog-0E1726?style=for-the-badge&logo=databricks&logoColor=2EE6A7)](https://www.databricks.com/product/unity-catalog)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
-[![CI Tests](https://img.shields.io/badge/CI-51%20Tests%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
+[![CI Tests](https://img.shields.io/badge/CI-60%20Tests%20Passing-10B981?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/actions)
 
 <p align="center">
   <a href="#the-story">The Problem</a> •
@@ -147,8 +147,12 @@ jobs:
 ### 3. Essential CLI Commands
 
 ```bash
-# Statically audit a pipeline script
+# Statically audit a single pipeline script or Databricks notebook (.ipynb)
 dlt-doctor analyze src/pipelines/orders_silver.py
+dlt-doctor analyze notebooks/01_ingest.ipynb
+
+# Recursively scan an entire Lakehouse repository directory
+dlt-doctor analyze src/pipelines --recursive
 
 # Calculate late-arriving partition blast radius and emit pruned MERGE SQL
 dlt-doctor restate --table main.gold.orders --late-date 2026-10-25 --window 7
@@ -161,6 +165,25 @@ dlt-doctor uc-migrate src/pipelines/orders.py --catalog prod_lakehouse --schema 
 
 # Forecast Databricks DBU burn and cluster sizing (Serverless vs Classic DLT)
 dlt-doctor cost --files-per-hour 25000 --avg-file-mb 12 --joins 2
+```
+
+### 4. Interactive Databricks Notebook Cell Magic
+
+Audit PySpark code interactively inside Databricks or Jupyter notebook cells before cluster execution:
+
+```python
+# Load the extension in notebook setup cell
+%load_ext dlt_doctor
+
+%%dlt_doctor
+# Audits cell Catalyst AST and renders a native displayHTML scorecard
+df_clean = (
+    spark.readStream.table("bronze_orders")
+    .withColumns({
+        "quantity_clean": F.expr("try_cast(quantity AS INT)"),
+        "unit_price_clean": F.expr("try_cast(unit_price AS DECIMAL(18,2))"),
+    })
+)
 ```
 
 ---
@@ -191,11 +214,13 @@ displayHTML(AdvisorDoctor().to_databricks_html(report))
 
 # 2. Audit Auto Loader ingestion stream progress for backpressure
 al_doctor = AutoLoaderDoctor()
-al_health = al_doctor.diagnose_stream_progress({
-    "numInputRows": 50000,
-    "inputRowsPerSecond": 1200.0,
-    "processedRowsPerSecond": 450.0,  # Falling behind ingestion rate
-})
+al_health = al_doctor.diagnose_stream_progress(
+    {
+        "numInputRows": 50000,
+        "inputRowsPerSecond": 1200.0,
+        "processedRowsPerSecond": 450.0,  # Falling behind ingestion rate
+    }
+)
 if al_health.is_backpressured:
     print(f"Stream backpressured: Backlog ~{al_health.estimated_backlog_rows:,} rows.")
 ```
@@ -216,9 +241,11 @@ rules = [
 ]
 plan = exp_doctor.build_quarantine_routing("silver_orders", rules)
 
+
 @dlt.table(name=plan.target_clean_table)
 def silver_orders():
     return dlt.read_stream("bronze_orders").filter(plan.valid_filter_sql)
+
 
 @dlt.table(name=plan.target_quarantine_table)
 def silver_orders_quarantine():
@@ -227,6 +254,7 @@ def silver_orders_quarantine():
         .filter(plan.invalid_filter_sql)
         .withColumn("_quarantined_at", F.current_timestamp())
     )
+
 
 # 2. Streaming CDC Micro-Batch Window Deduplication
 cdc = CdcDoctor().generate_cdc_templates(
@@ -262,9 +290,15 @@ spark.sql(scope.delta_merge_sql)
 cluster_rec = ClusterDoctor().advise_clustering(
     table_name="main.gold.fact_orders",
     columns=[
-        ColumnProfile("customer_id", "string", distinct_count=25000, filter_frequency_score=0.9),
-        ColumnProfile("order_date", "date", distinct_count=1800, filter_frequency_score=0.95),
-        ColumnProfile("order_uuid", "string", distinct_count=9900000),  # Rejected: near-unique
+        ColumnProfile(
+            "customer_id", "string", distinct_count=25000, filter_frequency_score=0.9
+        ),
+        ColumnProfile(
+            "order_date", "date", distinct_count=1800, filter_frequency_score=0.95
+        ),
+        ColumnProfile(
+            "order_uuid", "string", distinct_count=9900000
+        ),  # Rejected: near-unique
     ],
     total_rows=10000000,
 )
@@ -289,7 +323,7 @@ The test suite validates all 11 diagnostic engines across Python 3.10, 3.11, and
 
 ```bash
 pytest -v
-# 51 passed in 0.15s
+# 60 passed in 0.16s
 ```
 
 All source code is audited with `ruff` and verified against security vulnerabilities with `bandit -r src`.

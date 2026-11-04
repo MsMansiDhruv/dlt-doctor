@@ -14,7 +14,9 @@ from dlt_doctor.cluster import ClusterDoctor, ColumnProfile
 from dlt_doctor.compaction import CompactionDoctor
 from dlt_doctor.cost import CostDoctor
 from dlt_doctor.history import HistoryDoctor
+from dlt_doctor.notebook import extract_notebook_code, is_notebook_file
 from dlt_doctor.reconciler import RestatementDoctor
+from dlt_doctor.scanner import DirectoryScanner
 from dlt_doctor.schema import SchemaDoctor
 from dlt_doctor.spill import SpillDoctor
 from dlt_doctor.uc import UcDoctor
@@ -30,9 +32,17 @@ def main() -> int:
 
     # analyze command
     analyze_parser = subparsers.add_parser(
-        "analyze", help="Analyze PySpark or SQL source file"
+        "analyze", help="Analyze PySpark or SQL source file, notebook, or directory"
     )
-    analyze_parser.add_argument("path", help="Path to Python (.py) or SQL (.sql) file")
+    analyze_parser.add_argument(
+        "path", help="Path to Python (.py), notebook (.ipynb), or directory"
+    )
+    analyze_parser.add_argument(
+        "--recursive",
+        action="store_true",
+        default=True,
+        help="Scan directories recursively (default: True)",
+    )
     analyze_parser.add_argument(
         "--format",
         choices=["text", "markdown", "html"],
@@ -191,10 +201,23 @@ def main() -> int:
     if args.command == "analyze":
         target = Path(args.path)
         if not target.exists():
-            print(f"Error: File not found: {target}", file=sys.stderr)
+            print(f"Error: Path not found: {target}", file=sys.stderr)
             return 1
 
-        content = target.read_text(encoding="utf-8")
+        if target.is_dir():
+            scanner = DirectoryScanner()
+            dir_report = scanner.scan_directory(target, recursive=args.recursive)
+            if args.format == "markdown":
+                print(dir_report.to_markdown())
+            else:
+                print(dir_report.to_text())
+            return 1 if dir_report.has_critical_findings else 0
+
+        if is_notebook_file(target):
+            content = extract_notebook_code(target)
+        else:
+            content = target.read_text(encoding="utf-8")
+
         doctor = PlanDoctor()
         advisor = AdvisorDoctor()
 

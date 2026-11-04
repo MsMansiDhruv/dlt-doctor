@@ -4,7 +4,7 @@ author: "Mansi Dhruv"
 
 inputs:
   path:
-    description: "Path to Python or SQL file to analyze"
+    description: "Path to Python (.py), notebook (.ipynb), or directory to analyze"
     required: true
     default: "src"
   format:
