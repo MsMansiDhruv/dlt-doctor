@@ -156,6 +156,47 @@ def test_escapes_table_names_in_generated_code() -> None:
     assert "`main`.`bronze`.`orders`" in code or "`main.bronze.orders`" in code
 
 
+def test_quarantine_routing_custom_source_and_quarantine_tables() -> None:
+    """Verify build_quarantine_routing supports custom source_table and quarantine_table."""
+    doctor = ExpectationDoctor()
+    rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
+    plan = doctor.build_quarantine_routing(
+        table_name="silver_orders",
+        rules=rules,
+        source_table="raw_bronze_stream",
+        quarantine_table="silver_orders_dlq",
+    )
+    assert plan.target_clean_table == "silver_orders"
+    assert plan.target_quarantine_table == "silver_orders_dlq"
+    assert plan.source_table == "raw_bronze_stream"
+
+    code = plan.generate_pipeline_code()
+    assert "raw_bronze_stream" in code
+    assert "silver_orders_dlq" in code
+    assert "source_bronze" not in code
+
+
+def test_quarantine_routing_dynamic_fallback_no_hardcoded_bronze() -> None:
+    """When source_table is omitted, generate_pipeline_code should dynamically fallback to table-derived name rather than source_bronze."""
+    doctor = ExpectationDoctor()
+    rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
+    plan = doctor.build_quarantine_routing("my_clean_table", rules)
+    code = plan.generate_pipeline_code()
+    assert "source_bronze" not in code
+    assert "my_clean_table_staged_source" in code
+
+
+def test_quarantine_routing_plan_to_dict_includes_source_table() -> None:
+    doctor = ExpectationDoctor()
+    rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
+    plan = doctor.build_quarantine_routing(
+        "tbl", rules, source_table="src_tbl", quarantine_table="tbl_quarantine"
+    )
+    d = plan.to_dict()
+    assert d["source_table"] == "src_tbl"
+    assert d["target_quarantine_table"] == "tbl_quarantine"
+
+
 @pytest.mark.integration
 def test_pyspark_integration_quarantine_partition() -> None:
     """Verify NULL-safe partition property using a local PySpark session if available."""

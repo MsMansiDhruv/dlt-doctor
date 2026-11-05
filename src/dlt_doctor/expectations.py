@@ -71,6 +71,7 @@ class QuarantineRoutingPlan:
     invalid_filter_sql: str
     failed_rules_expr_sql: str = "array()"
     rules: list[ExpectationRule] = field(default_factory=list)
+    source_table: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,10 +81,11 @@ class QuarantineRoutingPlan:
             "invalid_filter_sql": self.invalid_filter_sql,
             "failed_rules_expr_sql": self.failed_rules_expr_sql,
             "rules": [r.to_dict() for r in self.rules],
+            "source_table": self.source_table,
         }
 
     def generate_pipeline_code(
-        self, source_table: str = "source_bronze", flavor: str = "dp"
+        self, source_table: str | None = None, flavor: str = "dp"
     ) -> str:
         """Convenience method to synthesize pipeline code directly from routing plan."""
         return ExpectationDoctor().generate_pipeline_code(
@@ -101,6 +103,8 @@ class ExpectationDoctor:
         self,
         table_name: str,
         rules: list[ExpectationRule],
+        source_table: str | None = None,
+        quarantine_table: str | None = None,
     ) -> QuarantineRoutingPlan:
         """Construct NULL-safe dual-routing filters separating clean data from quarantined records.
 
@@ -112,15 +116,17 @@ class ExpectationDoctor:
         # Honor action_on_failure: only rules with action_on_failure in {'quarantine', 'drop'} are routed to quarantine.
         # Rules with action_on_failure == 'warn' log metrics but do not drop or quarantine records.
         quarantine_rules = [r for r in rules if r.action_on_failure in {"quarantine", "drop"}]
+        effective_quarantine_table = quarantine_table or f"{table_name}_quarantine"
 
         if not quarantine_rules:
             return QuarantineRoutingPlan(
                 target_clean_table=table_name,
-                target_quarantine_table=f"{table_name}_quarantine",
+                target_quarantine_table=effective_quarantine_table,
                 valid_filter_sql="1 = 1",
                 invalid_filter_sql="1 = 0",
                 failed_rules_expr_sql="array()",
                 rules=rules,
+                source_table=source_table,
             )
 
         # All quarantine rules must pass for clean stream, wrapped in coalesce((<cond>), false) for NULL safety
@@ -142,17 +148,18 @@ class ExpectationDoctor:
 
         return QuarantineRoutingPlan(
             target_clean_table=table_name,
-            target_quarantine_table=f"{table_name}_quarantine",
+            target_quarantine_table=effective_quarantine_table,
             valid_filter_sql=valid_filter,
             invalid_filter_sql=invalid_filter,
             failed_rules_expr_sql=failed_rules_expr,
             rules=rules,
+            source_table=source_table,
         )
 
     def generate_pipeline_code(
         self,
         routing_plan: QuarantineRoutingPlan,
-        source_table: str,
+        source_table: str | None = None,
         flavor: str = "dp",
     ) -> str:
         """Generate single-pass Lakeflow or DLT pipeline definitions with quarantine routing.
@@ -164,12 +171,17 @@ class ExpectationDoctor:
         In Databricks Lakeflow Declarative Pipelines (`from pyspark import pipelines as dp`),
         `dp.read_stream` does not exist. Stream ingestion uses `spark.readStream.table(...)`.
         """
+        resolved_source = (
+            source_table
+            or routing_plan.source_table
+            or f"{routing_plan.target_clean_table}_staged_source"
+        )
         clean_func = _safe_identifier(routing_plan.target_clean_table)
         quarantine_func = _safe_identifier(routing_plan.target_quarantine_table)
         staging_view_name = f"{routing_plan.target_clean_table}_staged"
         staging_func = f"{clean_func}_staged"
 
-        escaped_src = _escape_table_name(source_table)
+        escaped_src = _escape_table_name(resolved_source)
         escaped_staging = _escape_table_name(staging_view_name)
 
         if flavor == "dp":
@@ -232,7 +244,7 @@ class ExpectationDoctor:
     def generate_dlt_decorator_code(
         self,
         routing_plan: QuarantineRoutingPlan,
-        source_table: str = "source_bronze",
+        source_table: str | None = None,
         flavor: str = "dp",
     ) -> str:
         """Backward-compatible wrapper for generate_pipeline_code."""
