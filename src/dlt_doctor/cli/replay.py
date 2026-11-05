@@ -38,6 +38,16 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default="updated_at",
         help="Timestamp column for recency guard (default: updated_at)",
     )
+    p.add_argument(
+        "--partition-col",
+        default=None,
+        help="Target partition column for partition pruning during MERGE",
+    )
+    p.add_argument(
+        "--partition-val",
+        default=None,
+        help="Partition value to filter in quarantine and target",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -50,6 +60,8 @@ def handle(args: argparse.Namespace) -> int:
             start_time=args.start_time,
             end_time=args.end_time,
             recency_col=args.recency_col,
+            partition_col=args.partition_col,
+            partition_val=args.partition_val,
         )
     except ValueError as exc:
         import sys

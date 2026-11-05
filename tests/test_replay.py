@@ -67,6 +67,45 @@ def test_generate_replay_sql_marks_replayed_rows() -> None:
     assert "_replayed_at" in sql
 
 
+def test_generate_replay_sql_partition_pruning() -> None:
+    """Replay SQL should prune partitions when partition_col and partition_val are provided."""
+    sql = generate_replay_sql(
+        quarantine_table="bronze_quarantine",
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        partition_col="event_date",
+        partition_val="2026-11-01",
+    )
+    parsed = sqlglot.parse_one(sql, read="spark")
+    assert parsed is not None
+    assert "event_date = '2026-11-01'" in sql
+    assert "target.event_date = source.event_date" in sql
+
+
+def test_cli_replay_partition_flags() -> None:
+    from unittest.mock import patch
+    from dlt_doctor.cli import main
+
+    test_args = [
+        "dlt-doctor",
+        "replay",
+        "--quarantine",
+        "bronze_quarantine",
+        "--target",
+        "silver_orders",
+        "--keys",
+        "order_id",
+        "--partition-col",
+        "event_date",
+        "--partition-val",
+        "2026-11-01",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+
 @pytest.mark.integration
 def test_execute_replay_sql_on_pyspark() -> None:
     """Execute generated replay SQL against local PySpark Delta tables."""

@@ -34,6 +34,8 @@ def generate_replay_sql(
     start_time: str | None = None,
     end_time: str | None = None,
     recency_col: str | None = "updated_at",
+    partition_col: str | None = None,
+    partition_val: str | None = None,
 ) -> str:
     """Generate idempotent Delta MERGE SQL to reprocess quarantined records.
 
@@ -52,6 +54,7 @@ def generate_replay_sql(
     clean_quarantine = _validate_identifier(quarantine_table)
     clean_target = _validate_identifier(target_table)
     clean_keys = [_validate_identifier(k) for k in primary_keys]
+    clean_part = _validate_identifier(partition_col) if partition_col else None
 
     conditions: list[str] = []
     if rule_name:
@@ -63,9 +66,15 @@ def generate_replay_sql(
     if end_time:
         valid_end = _validate_iso_timestamp(end_time, "end_time")
         conditions.append(f"_quarantined_at <= '{valid_end}'")
+    if clean_part and partition_val:
+        escaped_val = partition_val.replace("'", "''")
+        conditions.append(f"{clean_part} = '{escaped_val}'")
 
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
+    join_predicates = [f"target.{k} = source.{k}" for k in clean_keys]
+    if clean_part:
+        join_predicates.append(f"target.{clean_part} = source.{clean_part}")
+    pk_join = " AND ".join(join_predicates)
     partition_cols = ", ".join(clean_keys)
 
     recency_guard = ""
