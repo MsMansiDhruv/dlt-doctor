@@ -63,7 +63,9 @@ def handle(args: argparse.Namespace) -> int:
     # If --fix / --auto-heal is requested on a file, delegate to heal
     if args.fix:
         if target.is_dir():
-            print("Error: --fix / --auto-heal must be targeted at a specific file.", file=sys.stderr)
+            print(
+                "Error: --fix / --auto-heal must be targeted at a specific file.", file=sys.stderr
+            )
             return 2
         write_mode = not getattr(args, "dry_run", False)
         heal_res = heal_file(target, write=write_mode)

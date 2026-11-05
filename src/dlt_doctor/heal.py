@@ -343,9 +343,7 @@ def heal_file(
         raise FileNotFoundError(f"File not found: {path}")
 
     source_code = path.read_text(encoding="utf-8")
-    result = auto_heal_source(
-        source_code, file_path=path.name, quarantine_suffix=quarantine_suffix
-    )
+    result = auto_heal_source(source_code, file_path=path.name, quarantine_suffix=quarantine_suffix)
 
     if write and result.can_heal and result.diff:
         path.write_text(result.healed_code, encoding="utf-8")

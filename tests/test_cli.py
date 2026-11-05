@@ -271,4 +271,3 @@ def users():
     with patch("sys.argv", check_args):
         exit_code = main()
         assert exit_code == 0
-

@@ -90,6 +90,7 @@ def test_restate_composite_match_keys_and_dynamic_source() -> None:
 
 def test_cli_restate_multi_keys_and_dynamic_source() -> None:
     from unittest.mock import patch
+
     from dlt_doctor.cli import main
 
     test_args = [
@@ -106,7 +107,6 @@ def test_cli_restate_multi_keys_and_dynamic_source() -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
-
 
 
 def test_advise_liquid_clustering() -> None:

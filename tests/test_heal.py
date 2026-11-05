@@ -255,4 +255,3 @@ def events():
     result = auto_heal_source(code, quarantine_suffix="_quarantine_dlq")
     assert result.can_heal is True
     assert "events_quarantine_dlq" in result.healed_code
-

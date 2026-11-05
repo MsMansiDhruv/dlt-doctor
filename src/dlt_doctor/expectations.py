@@ -84,9 +84,7 @@ class QuarantineRoutingPlan:
             "source_table": self.source_table,
         }
 
-    def generate_pipeline_code(
-        self, source_table: str | None = None, flavor: str = "dp"
-    ) -> str:
+    def generate_pipeline_code(self, source_table: str | None = None, flavor: str = "dp") -> str:
         """Convenience method to synthesize pipeline code directly from routing plan."""
         return ExpectationDoctor().generate_pipeline_code(
             self, source_table=source_table, flavor=flavor

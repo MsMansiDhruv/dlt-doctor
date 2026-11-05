@@ -128,6 +128,7 @@ def test_cdc_custom_source_stream_and_template_attributes() -> None:
 
 def test_cdc_cli_flags_source_partition_values() -> None:
     from unittest.mock import patch
+
     from dlt_doctor.cli import main
 
     test_args = [
@@ -148,7 +149,6 @@ def test_cdc_cli_flags_source_partition_values() -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
-
 
 
 @pytest.mark.integration

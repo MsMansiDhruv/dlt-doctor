@@ -20,11 +20,11 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         "--sequence-col", default="_cdc_seq_id", help="Sequence column (default: _cdc_seq_id)"
     )
     p.add_argument(
-        "--source", default=None, help="Source CDC stream or table name (default: <table_prefix>_cdc_stream)"
+        "--source",
+        default=None,
+        help="Source CDC stream or table name (default: <table_prefix>_cdc_stream)",
     )
-    p.add_argument(
-        "--partition-col", default=None, help="Partition column for MERGE pruning"
-    )
+    p.add_argument("--partition-col", default=None, help="Partition column for MERGE pruning")
     p.add_argument(
         "--values", nargs="*", default=None, help="Value/attribute columns for SCD2 tracking"
     )

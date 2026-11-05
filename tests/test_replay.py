@@ -84,6 +84,7 @@ def test_generate_replay_sql_partition_pruning() -> None:
 
 def test_cli_replay_partition_flags() -> None:
     from unittest.mock import patch
+
     from dlt_doctor.cli import main
 
     test_args = [
@@ -103,7 +104,6 @@ def test_cli_replay_partition_flags() -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
-
 
 
 @pytest.mark.integration
