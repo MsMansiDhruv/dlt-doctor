@@ -68,6 +68,47 @@ def test_restate_merge_stops_inserting_out_of_window_source_rows() -> None:
     )
 
 
+def test_restate_composite_match_keys_and_dynamic_source() -> None:
+    """RestatementDoctor must support composite match keys and dynamically default source_table."""
+    doctor = RestatementDoctor()
+    scope = doctor.calculate_blast_radius(
+        target_table="gold_orders",
+        late_date_iso="2026-11-01",
+        window_size_days=3,
+        partition_col="event_date",
+        match_key=["tenant_id", "order_id"],
+    )
+    assert scope.source_table == "gold_orders_recalculated"
+    assert scope.match_keys == ["tenant_id", "order_id"]
+    assert "target.tenant_id = source.tenant_id" in scope.delta_merge_sql
+    assert "target.order_id = source.order_id" in scope.delta_merge_sql
+    assert "USING gold_orders_recalculated AS source" in scope.delta_merge_sql
+
+    parsed = sqlglot.parse_one(scope.delta_merge_sql, read="spark")
+    assert parsed is not None
+
+
+def test_cli_restate_multi_keys_and_dynamic_source() -> None:
+    from unittest.mock import patch
+    from dlt_doctor.cli import main
+
+    test_args = [
+        "dlt-doctor",
+        "restate",
+        "--table",
+        "main.gold.fact_orders",
+        "--late-date",
+        "2026-10-25",
+        "--match-key",
+        "account_id",
+        "order_id",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+
 def test_advise_liquid_clustering() -> None:
     doctor = RestatementDoctor()
     ddl = doctor.advise_liquid_clustering(

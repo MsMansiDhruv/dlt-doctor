@@ -15,11 +15,16 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--partition-col", default="order_date", help="Partition column (default: order_date)"
     )
-    p.add_argument("--match-key", default="id", help="Primary match key column (default: id)")
+    p.add_argument(
+        "--match-key",
+        nargs="+",
+        default=["id"],
+        help="Primary match key column(s) (default: id)",
+    )
     p.add_argument(
         "--source",
-        default="source_recalculated",
-        help="Source staging table (default: source_recalculated)",
+        default=None,
+        help="Source staging table (default: <table_prefix>_recalculated)",
     )
     p.add_argument(
         "--delete-unmatched",

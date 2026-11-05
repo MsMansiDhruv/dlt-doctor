@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 IDENTIFIER_PATTERN = re.compile(
@@ -32,6 +32,8 @@ class BlastRadiusScope:
     blast_radius_end: str
     partition_pruning_clause: str
     delta_merge_sql: str
+    match_keys: list[str] = field(default_factory=lambda: ["id"])
+    source_table: str = "source_recalculated"
 
 
 @dataclass
@@ -55,8 +57,8 @@ class RestatementDoctor:
         late_date_iso: str,
         window_size_days: int,
         partition_col: str = "order_date",
-        match_key: str = "id",
-        source_table: str = "source_recalculated",
+        match_key: str | list[str] = "id",
+        source_table: str | None = None,
         delete_unmatched: bool = False,
     ) -> BlastRadiusScope:
         """Calculate the exact affected partition window [t_late, t_late + W - 1]."""
@@ -64,9 +66,23 @@ class RestatementDoctor:
             raise ValueError(f"window_size_days must be at least 1, got {window_size_days}.")
 
         clean_target = _validate_identifier(target_table)
-        clean_source = _validate_identifier(source_table)
+        clean_source = (
+            _validate_identifier(source_table)
+            if source_table
+            else (
+                f"{clean_target.split('.')[-1]}_recalculated"
+                if "." in clean_target
+                else f"{clean_target}_recalculated"
+            )
+        )
         clean_part = _validate_identifier(partition_col)
-        clean_key = _validate_identifier(match_key)
+
+        if isinstance(match_key, str):
+            keys_list = [match_key]
+        else:
+            keys_list = list(match_key)
+        clean_keys = [_validate_identifier(k) for k in keys_list]
+        pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
 
         t_late = datetime.date.fromisoformat(late_date_iso)
         t_end = t_late + datetime.timedelta(days=window_size_days - 1)
@@ -91,7 +107,7 @@ class RestatementDoctor:
             f"MERGE INTO {clean_target} AS target "  # nosec B608
             f"USING {clean_source} AS source "
             f"ON target.{clean_part} = source.{clean_part} "
-            f"AND target.{clean_key} = source.{clean_key} "
+            f"AND {pk_join} "
             f"AND target.{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}' "
             f"WHEN MATCHED THEN UPDATE SET * "
             f"WHEN NOT MATCHED AND source.{clean_part} BETWEEN '{t_late_str}' AND '{t_end_str}' THEN INSERT *{delete_clause};"
@@ -104,6 +120,8 @@ class RestatementDoctor:
             blast_radius_end=t_end_str,
             partition_pruning_clause=pruning_clause,
             delta_merge_sql=merge_sql,
+            match_keys=clean_keys,
+            source_table=clean_source,
         )
 
     def analyze_commit_history(
