@@ -111,6 +111,46 @@ def test_auto_cdc_creates_streaming_table() -> None:
     assert code.index("dlt.create_streaming_table") < code.index("dlt.apply_changes")
 
 
+def test_cdc_custom_source_stream_and_template_attributes() -> None:
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="main.silver.customers",
+        primary_keys=["customer_id"],
+        source_stream="bronze_customers_cdc",
+        partition_col="region",
+        value_cols=["name", "email"],
+    )
+    assert template.source_stream == "bronze_customers_cdc"
+    assert "source='bronze_customers_cdc'" in template.auto_cdc_code
+    assert "target.region = source.region" in template.scd1_merge_sql
+    assert "email" in template.scd2_merge_sql
+
+
+def test_cdc_cli_flags_source_partition_values() -> None:
+    from unittest.mock import patch
+    from dlt_doctor.cli import main
+
+    test_args = [
+        "dlt-doctor",
+        "cdc",
+        "--table",
+        "main.silver.orders",
+        "--keys",
+        "order_id",
+        "--source",
+        "raw_orders_cdc",
+        "--partition-col",
+        "order_date",
+        "--values",
+        "amount",
+        "status",
+    ]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+
 @pytest.mark.integration
 def test_execute_cdc_scd_on_pyspark() -> None:
     """Execute generated CDC SCD1 and SCD2 statements against local PySpark Delta tables."""

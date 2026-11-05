@@ -28,6 +28,7 @@ class CdcMergeTemplate:
     scd1_merge_sql: str
     scd2_merge_sql: str
     auto_cdc_code: str = ""
+    source_stream: str = "source_cdc_stream"
 
 
 class CdcDoctor:
@@ -42,6 +43,7 @@ class CdcDoctor:
         partition_col: str | None = None,
         source_is_cdf: bool = True,
         value_cols: list[str] | None = None,
+        source_stream: str | None = None,
     ) -> CdcMergeTemplate:
         """Generate deduplication and MERGE patterns to eliminate multiple-match errors."""
         clean_target = _validate_identifier(target_table)
@@ -50,6 +52,15 @@ class CdcDoctor:
         clean_seq = _validate_identifier(sequence_col)
         clean_part = _validate_identifier(partition_col) if partition_col else None
         clean_values = [_validate_identifier(v) for v in value_cols] if value_cols else []
+        clean_source = (
+            _validate_identifier(source_stream)
+            if source_stream
+            else (
+                f"{clean_target.split('.')[-1]}_cdc_stream"
+                if "." in clean_target
+                else "source_cdc_stream"
+            )
+        )
 
         pk_str = ", ".join(f"'{k}'" for k in clean_keys)
         pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
@@ -150,7 +161,7 @@ class CdcDoctor:
             "# 2. Declare CDC flow into streaming table\n"
             "dlt.apply_changes(\n"
             f"    target='{clean_target}',\n"
-            "    source='source_cdc_stream',\n"
+            f"    source='{clean_source}',\n"
             f"    keys=[{pk_str}],\n"
             f"    sequence_by=F.col('{clean_seq}'),\n"
             "    apply_as_deletes=F.expr(\"_change_type = 'delete'\"),\n"
@@ -167,4 +178,5 @@ class CdcDoctor:
             scd1_merge_sql=scd1_sql,
             scd2_merge_sql=scd2_sql,
             auto_cdc_code=auto_cdc_code,
+            source_stream=clean_source,
         )
