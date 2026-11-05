@@ -23,7 +23,9 @@ class HealResult:
     tables_healed: list[str] | None = None
 
 
-def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealResult:
+def auto_heal_source(
+    source_code: str, file_path: str = "pipeline.py", quarantine_suffix: str = "_quarantine"
+) -> HealResult:
     """Analyze source code and synthesize single-pass quarantine tables for expect_or_drop."""
     try:
         tree = ast.parse(source_code)
@@ -252,7 +254,7 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
         )
 
         # Build quarantine table
-        quarantine_table_name = f"{table_name}_quarantine"
+        quarantine_table_name = f"{table_name}{quarantine_suffix}"
         if flavor == "dp":
             quarantine_dec = f'@dp.table(name="{quarantine_table_name}")'
         else:
@@ -332,14 +334,18 @@ def auto_heal_source(source_code: str, file_path: str = "pipeline.py") -> HealRe
     )
 
 
-def heal_file(file_path: Path | str, write: bool = False) -> HealResult:
+def heal_file(
+    file_path: Path | str, write: bool = False, quarantine_suffix: str = "_quarantine"
+) -> HealResult:
     """Run auto-heal on a file path, optionally writing back the changes."""
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
     source_code = path.read_text(encoding="utf-8")
-    result = auto_heal_source(source_code, file_path=path.name)
+    result = auto_heal_source(
+        source_code, file_path=path.name, quarantine_suffix=quarantine_suffix
+    )
 
     if write and result.can_heal and result.diff:
         path.write_text(result.healed_code, encoding="utf-8")

@@ -34,9 +34,17 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--fix",
+        "--auto-heal",
+        dest="fix",
         action="store_true",
         default=False,
         help="Automatically synthesize zero-loss quarantine tables for expect_or_drop",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="When used with --fix/--auto-heal, display diff without modifying files",
     )
     p.add_argument(
         "--fail-on",
@@ -52,15 +60,20 @@ def handle(args: argparse.Namespace) -> int:
         print(f"Error: Path not found: {target}", file=sys.stderr)
         return 2
 
-    # If --fix is requested on a file, delegate to heal
+    # If --fix / --auto-heal is requested on a file, delegate to heal
     if args.fix:
         if target.is_dir():
-            print("Error: --fix must be targeted at a specific file.", file=sys.stderr)
+            print("Error: --fix / --auto-heal must be targeted at a specific file.", file=sys.stderr)
             return 2
-        heal_res = heal_file(target, write=True)
+        write_mode = not getattr(args, "dry_run", False)
+        heal_res = heal_file(target, write=write_mode)
         if heal_res.diff:
-            print("Applied automated fix:")
-            print(heal_res.diff)
+            if write_mode:
+                print("Applied automated fix:")
+                print(heal_res.diff)
+            else:
+                print("Dry run diff (run without --dry-run to apply):")
+                print(heal_res.diff)
         else:
             print(heal_res.reason or "No changes needed.")
         return 0

@@ -243,3 +243,16 @@ def test_pyspark_integration_healed_pipeline_execution() -> None:
     assert quarantine_ids == {2, 3, 4}
     assert clean_ids.union(quarantine_ids) == {1, 2, 3, 4, 5}
     assert clean_ids.isdisjoint(quarantine_ids)
+
+
+def test_auto_heal_custom_quarantine_suffix() -> None:
+    code = """import dlt
+@dlt.table(name="events")
+@dlt.expect_or_drop("v", "event_id IS NOT NULL")
+def events():
+    return dlt.read_stream("bronze")
+"""
+    result = auto_heal_source(code, quarantine_suffix="_quarantine_dlq")
+    assert result.can_heal is True
+    assert "events_quarantine_dlq" in result.healed_code
+

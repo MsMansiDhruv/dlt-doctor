@@ -209,3 +209,66 @@ def test_cli_analyze_notebook(tmp_path: Path) -> None:
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
+
+
+def test_cli_analyze_auto_heal_and_dry_run(tmp_path: Path) -> None:
+    code = """import dlt
+@dlt.table(name="test_heal_tbl")
+@dlt.expect_or_drop("valid_id", "id > 0")
+def test_heal_tbl():
+    return dlt.read_stream("bronze")
+"""
+    pipeline_file = tmp_path / "heal_pipeline.py"
+    pipeline_file.write_text(code, encoding="utf-8")
+
+    # Dry run should not modify file
+    test_args = ["dlt-doctor", "analyze", str(pipeline_file), "--auto-heal", "--dry-run"]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+    assert pipeline_file.read_text(encoding="utf-8") == code
+
+    # Without dry run, modifies file
+    test_args_apply = ["dlt-doctor", "analyze", str(pipeline_file), "--auto-heal"]
+    with patch("sys.argv", test_args_apply):
+        exit_code = main()
+        assert exit_code == 0
+    assert "_failed_rules" in pipeline_file.read_text(encoding="utf-8")
+
+
+def test_cli_heal_check_and_custom_suffix(tmp_path: Path) -> None:
+    code = """import dlt
+@dlt.table(name="users")
+@dlt.expect_or_drop("valid_u", "id IS NOT NULL")
+def users():
+    return dlt.read_stream("raw")
+"""
+    pipeline_file = tmp_path / "users.py"
+    pipeline_file.write_text(code, encoding="utf-8")
+
+    # --check exits 1 when healing is needed
+    check_args = ["dlt-doctor", "heal", str(pipeline_file), "--check"]
+    with patch("sys.argv", check_args):
+        exit_code = main()
+        assert exit_code == 1
+
+    # heal with custom suffix
+    write_args = [
+        "dlt-doctor",
+        "heal",
+        str(pipeline_file),
+        "--write",
+        "--quarantine-suffix",
+        "_dlq",
+    ]
+    with patch("sys.argv", write_args):
+        exit_code = main()
+        assert exit_code == 0
+    healed = pipeline_file.read_text(encoding="utf-8")
+    assert "users_dlq" in healed
+
+    # Running --check on healed file now exits 0
+    with patch("sys.argv", check_args):
+        exit_code = main()
+        assert exit_code == 0
+
