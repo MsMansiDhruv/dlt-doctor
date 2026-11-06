@@ -23,10 +23,17 @@ class HealResult:
     tables_healed: list[str] | None = None
 
 
+SUFFIX_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+
+
 def auto_heal_source(
     source_code: str, file_path: str = "pipeline.py", quarantine_suffix: str = "_quarantine"
 ) -> HealResult:
     """Analyze source code and synthesize single-pass quarantine tables for expect_or_drop."""
+    if not SUFFIX_PATTERN.match(quarantine_suffix):
+        raise ValueError(
+            f"Invalid quarantine_suffix '{quarantine_suffix}'. Must match ^[A-Za-z0-9_]+$."
+        )
     try:
         tree = ast.parse(source_code)
     except SyntaxError as exc:

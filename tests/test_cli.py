@@ -213,7 +213,7 @@ def test_cli_analyze_notebook(tmp_path: Path) -> None:
         assert exit_code == 0
 
 
-def test_cli_analyze_auto_heal_and_dry_run(tmp_path: Path) -> None:
+def test_cli_analyze_auto_heal_preview_and_write(tmp_path: Path) -> None:
     code = """import dlt
 @dlt.table(name="test_heal_tbl")
 @dlt.expect_or_drop("valid_id", "id > 0")
@@ -223,19 +223,45 @@ def test_heal_tbl():
     pipeline_file = tmp_path / "heal_pipeline.py"
     pipeline_file.write_text(code, encoding="utf-8")
 
-    # Dry run should not modify file
-    test_args = ["dlt-doctor", "analyze", str(pipeline_file), "--auto-heal", "--dry-run"]
+    # Preview by default (does not modify file)
+    test_args = ["dlt-doctor", "analyze", str(pipeline_file), "--auto-heal"]
     with patch("sys.argv", test_args):
         exit_code = main()
         assert exit_code == 0
     assert pipeline_file.read_text(encoding="utf-8") == code
 
-    # Without dry run, modifies file
-    test_args_apply = ["dlt-doctor", "analyze", str(pipeline_file), "--auto-heal"]
+    # With --write and --quarantine-suffix, modifies file
+    test_args_apply = [
+        "dlt-doctor",
+        "analyze",
+        str(pipeline_file),
+        "--auto-heal",
+        "--write",
+        "--quarantine-suffix",
+        "_dlq",
+    ]
     with patch("sys.argv", test_args_apply):
         exit_code = main()
         assert exit_code == 0
-    assert "_failed_rules" in pipeline_file.read_text(encoding="utf-8")
+    healed = pipeline_file.read_text(encoding="utf-8")
+    assert "_failed_rules" in healed
+    assert "test_heal_tbl_dlq" in healed
+
+
+def test_cli_analyze_auto_heal_refusal_exits_nonzero(tmp_path: Path) -> None:
+    code = """import dlt
+@dlt.table
+@dlt.expect_all_or_drop(fetch_remote_rules())
+def dynamic_pipe():
+    return dlt.read_stream("bronze")
+"""
+    pipeline_file = tmp_path / "dynamic.py"
+    pipeline_file.write_text(code, encoding="utf-8")
+
+    test_args = ["dlt-doctor", "analyze", str(pipeline_file), "--auto-heal"]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code != 0
 
 
 def test_cli_heal_check_and_custom_suffix(tmp_path: Path) -> None:

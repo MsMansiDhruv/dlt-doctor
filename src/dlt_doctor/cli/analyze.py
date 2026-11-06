@@ -41,10 +41,21 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Automatically synthesize zero-loss quarantine tables for expect_or_drop",
     )
     p.add_argument(
+        "--write",
+        action="store_true",
+        default=False,
+        help="Apply synthesized code changes directly to the file (default: preview only)",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
         help="When used with --fix/--auto-heal, display diff without modifying files",
+    )
+    p.add_argument(
+        "--quarantine-suffix",
+        default="_quarantine",
+        help="Suffix for synthesized quarantine table (default: _quarantine)",
     )
     p.add_argument(
         "--fail-on",
@@ -67,14 +78,21 @@ def handle(args: argparse.Namespace) -> int:
                 "Error: --fix / --auto-heal must be targeted at a specific file.", file=sys.stderr
             )
             return 2
-        write_mode = not getattr(args, "dry_run", False)
-        heal_res = heal_file(target, write=write_mode)
+        write_mode = getattr(args, "write", False) and not getattr(args, "dry_run", False)
+        heal_res = heal_file(
+            target,
+            write=write_mode,
+            quarantine_suffix=getattr(args, "quarantine_suffix", "_quarantine"),
+        )
+        if not heal_res.can_heal:
+            print(heal_res.reason or "Cannot auto-heal file.", file=sys.stderr)
+            return 3
         if heal_res.diff:
             if write_mode:
                 print("Applied automated fix:")
                 print(heal_res.diff)
             else:
-                print("Dry run diff (run without --dry-run to apply):")
+                print("Preview diff (run with --write to apply):")
                 print(heal_res.diff)
         else:
             print(heal_res.reason or "No changes needed.")

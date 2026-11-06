@@ -255,3 +255,29 @@ def events():
     result = auto_heal_source(code, quarantine_suffix="_quarantine_dlq")
     assert result.can_heal is True
     assert "events_quarantine_dlq" in result.healed_code
+
+
+def test_auto_heal_validates_quarantine_suffix_pattern() -> None:
+    code = """import dlt
+@dlt.table(name="events")
+@dlt.expect_or_drop("v", "event_id IS NOT NULL")
+def events():
+    return dlt.read_stream("bronze")
+"""
+    with pytest.raises(ValueError, match="Invalid quarantine_suffix"):
+        auto_heal_source(code, quarantine_suffix="; DROP TABLE")
+
+    with pytest.raises(ValueError, match="Invalid quarantine_suffix"):
+        auto_heal_source(code, quarantine_suffix="")
+
+
+def test_auto_heal_rejects_colliding_quarantine_name() -> None:
+    code = """import dlt
+@dlt.table(name="events")
+@dlt.expect_or_drop("v", "event_id IS NOT NULL")
+def events():
+    return dlt.read_stream("bronze")
+"""
+    # Suffix that collides with empty or clean name
+    with pytest.raises(ValueError, match="Invalid quarantine_suffix"):
+        auto_heal_source(code, quarantine_suffix="")
