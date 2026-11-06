@@ -45,6 +45,7 @@ class CdcDoctor:
         value_cols: list[str] | None = None,
         source_stream: str | None = None,
         include_auto_cdc: bool = False,
+        include_scd2: bool = False,
     ) -> CdcMergeTemplate:
         """Generate deduplication and MERGE patterns to eliminate multiple-match errors."""
         clean_target = _validate_identifier(target_table)
@@ -56,6 +57,9 @@ class CdcDoctor:
 
         if include_auto_cdc and not source_stream:
             raise ValueError("source_stream must be provided when auto_cdc_code is requested.")
+
+        if include_scd2 and not clean_values:
+            raise ValueError("value_cols must be provided to generate SCD Type 2 MERGE SQL.")
 
         clean_source = _validate_identifier(source_stream) if source_stream else ""
 
@@ -111,41 +115,50 @@ class CdcDoctor:
             f"    SELECT 1 FROM cdc_deletes_batch AS del\n"
             f"    WHERE {del_join}\n"
             f");\n\n"
-            f"-- 2. Upsert clause: source_cdc_batch has _change_type dropped\n"
+            f"-- 2. Upsert clause: source_cdc_batch has _change_type dropped with recency guard\n"
             f"MERGE INTO {clean_target} AS target\n"  # nosec B608
             f"USING source_cdc_batch AS source\n"
             f"ON {pk_join} {partition_clause}\n"
-            f"WHEN MATCHED THEN UPDATE SET *\n"
+            f"WHEN MATCHED AND (target.{clean_time} IS NULL OR source.{clean_time} >= target.{clean_time}) THEN UPDATE SET *\n"
             f"WHEN NOT MATCHED THEN INSERT *;"
         )
 
-        # Standard valid Databricks Delta SCD2 staging-union pattern
-        insert_cols_list = (
-            clean_keys
-            + [c for c in clean_values if c not in clean_keys]
-            + ["is_current", "valid_from", "valid_to"]
-        )
-        insert_vals_list = [
-            f"staged.{c}" for c in clean_keys + [c for c in clean_values if c not in clean_keys]
-        ] + ["true", f"staged.{clean_time}", "NULL"]
-        insert_cols_str = ", ".join(insert_cols_list)
-        insert_vals_str = ", ".join(insert_vals_list)
+        scd2_sql = ""
+        if clean_values or include_scd2:
+            insert_cols_list = (
+                clean_keys
+                + [c for c in clean_values if c not in clean_keys]
+                + ["is_current", "valid_from", "valid_to"]
+            )
+            insert_vals_list = [
+                f"staged.{c}" for c in clean_keys + [c for c in clean_values if c not in clean_keys]
+            ] + ["true", f"staged.{clean_time}", "NULL"]
+            insert_cols_str = ", ".join(insert_cols_list)
+            insert_vals_str = ", ".join(insert_vals_list)
 
-        scd2_sql = (
-            f"MERGE INTO {clean_target} AS target\n"  # nosec B608
-            f"USING (\n"
-            f"    SELECT source.{clean_keys[0]} AS merge_key, source.* FROM source_cdc_batch AS source\n"
-            f"    JOIN {clean_target} AS current_target ON {current_target_pk_join} AND current_target.is_current = true\n"
-            f"    UNION ALL\n"
-            f"    SELECT NULL AS merge_key, source.* FROM source_cdc_batch AS source\n"
-            f") AS staged\n"
-            f"ON target.{clean_keys[0]} = staged.merge_key AND target.is_current = true\n"
-            f"WHEN MATCHED THEN\n"
-            f"    UPDATE SET is_current = false, valid_to = staged.{clean_time}\n"
-            f"WHEN NOT MATCHED THEN\n"
-            f"    INSERT ({insert_cols_str})\n"
-            f"    VALUES ({insert_vals_str});"
-        )
+            scd2_merge_key_selects = ", ".join(f"source.{k} AS merge_key_{k}" for k in clean_keys)
+            scd2_null_key_selects = ", ".join(f"NULL AS merge_key_{k}" for k in clean_keys)
+            scd2_on_predicates = [f"target.{k} = staged.merge_key_{k}" for k in clean_keys]
+            scd2_on_predicates.append("target.is_current = true")
+            if clean_part:
+                scd2_on_predicates.append(f"target.{clean_part} = staged.{clean_part}")
+            scd2_on_clause = " AND ".join(scd2_on_predicates)
+
+            scd2_sql = (
+                f"MERGE INTO {clean_target} AS target\n"  # nosec B608
+                f"USING (\n"
+                f"    SELECT {scd2_merge_key_selects}, source.* FROM source_cdc_batch AS source\n"
+                f"    JOIN {clean_target} AS current_target ON {current_target_pk_join} AND current_target.is_current = true\n"
+                f"    UNION ALL\n"
+                f"    SELECT {scd2_null_key_selects}, source.* FROM source_cdc_batch AS source\n"
+                f") AS staged\n"
+                f"ON {scd2_on_clause}\n"
+                f"WHEN MATCHED AND (target.{clean_time} IS NULL OR staged.{clean_time} >= target.{clean_time}) THEN\n"
+                f"    UPDATE SET is_current = false, valid_to = staged.{clean_time}\n"
+                f"WHEN NOT MATCHED THEN\n"
+                f"    INSERT ({insert_cols_str})\n"
+                f"    VALUES ({insert_vals_str});"
+            )
 
         auto_cdc_code = (
             (

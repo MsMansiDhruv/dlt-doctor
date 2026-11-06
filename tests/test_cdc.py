@@ -18,6 +18,7 @@ def test_cdc_doctor_templates() -> None:
         event_time_col="updated_at",
         sequence_col="_cdc_seq_id",
         partition_col="region",
+        value_cols=["merchant_name"],
     )
 
     assert "MERGE INTO main.silver.dim_merchants" in template.scd1_merge_sql
@@ -69,6 +70,7 @@ def test_scd2_template_structure_and_syntax() -> None:
         target_table="silver_customers",
         primary_keys=["customer_id"],
         event_time_col="updated_at",
+        value_cols=["name", "tier"],
     )
     sql = template.scd2_merge_sql
 
@@ -90,6 +92,51 @@ def test_scd2_template_structure_and_syntax() -> None:
     assert "is_current = false" in sql or "is_current = FALSE" in sql
     assert "is_current" in sql
     assert "valid_from" in sql
+
+
+def test_scd2_composite_keys_and_recency_guard() -> None:
+    """SCD2 must join on all composite keys and include a recency guard."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_customers",
+        primary_keys=["tenant_id", "user_id"],
+        event_time_col="updated_at",
+        value_cols=["email", "status"],
+    )
+    sql = template.scd2_merge_sql
+    parsed = sqlglot.parse_one(sql, read="spark")
+    assert parsed is not None
+    # Both composite keys must be joined in ON clause
+    assert "target.tenant_id = staged.merge_key_tenant_id" in sql
+    assert "target.user_id = staged.merge_key_user_id" in sql
+    # Recency guard on SCD2 UPDATE
+    assert "target.updated_at IS NULL OR staged.updated_at >= target.updated_at" in sql
+
+
+def test_scd1_recency_guard() -> None:
+    """SCD1 MERGE must include a recency guard on event timestamp."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        event_time_col="updated_at",
+    )
+    assert (
+        "target.updated_at IS NULL OR source.updated_at >= target.updated_at"
+        in template.scd1_merge_sql
+    )
+
+
+def test_scd2_requires_value_cols() -> None:
+    """SCD2 generation without value_cols must raise ValueError."""
+    doctor = CdcDoctor()
+    with pytest.raises(ValueError, match="value_cols must be provided"):
+        doctor.generate_cdc_templates(
+            target_table="silver_customers",
+            primary_keys=["customer_id"],
+            include_scd2=True,
+            value_cols=None,
+        )
 
 
 def test_auto_cdc_creates_streaming_table() -> None:
@@ -215,7 +262,7 @@ def test_execute_cdc_scd_on_pyspark() -> None:
             SELECT 2 AS id, 150.0 AS amt, current_timestamp() AS updated_at
         """)
         tmpl_scd2 = doctor.generate_cdc_templates(
-            "default.cdc_scd2_tgt", ["id"], event_time_col="updated_at"
+            "default.cdc_scd2_tgt", ["id"], event_time_col="updated_at", value_cols=["amt"]
         )
         spark.sql(tmpl_scd2.scd2_merge_sql)
     finally:

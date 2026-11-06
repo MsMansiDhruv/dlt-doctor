@@ -24,6 +24,29 @@ class HealResult:
 
 
 SUFFIX_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+NONDETERMINISTIC_FUNCS = {
+    "rand",
+    "randn",
+    "uuid",
+    "current_timestamp",
+    "current_date",
+    "monotonically_increasing_id",
+    "now",
+    "unix_timestamp",
+}
+
+
+def _has_nondeterministic_calls(func_node: ast.FunctionDef) -> bool:
+    for node in ast.walk(func_node):
+        if isinstance(node, ast.Call):
+            func_name = ""
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                func_name = node.func.attr
+            if func_name.lower() in NONDETERMINISTIC_FUNCS:
+                return True
+    return False
 
 
 def auto_heal_source(
@@ -84,6 +107,18 @@ def auto_heal_source(
                 reason=(
                     f"Refusing to auto-heal materialized view '{func.name}' reading with dlt.read; "
                     "materialized views require snapshot refresh semantics."
+                ),
+            )
+
+        if _has_nondeterministic_calls(func):
+            return HealResult(
+                original_code=source_code,
+                healed_code=source_code,
+                diff="",
+                can_heal=False,
+                reason=(
+                    f"Refusing to auto-heal function '{func.name}': function body contains "
+                    "non-deterministic or stateful calls that would recompute different values across stages."
                 ),
             )
 
@@ -221,8 +256,8 @@ def auto_heal_source(
         # Build condition expressions for staged view
         failed_items: list[str] = []
         for r in rules:
-            cond_escaped = r.condition_sql.replace('"', '\\"')
-            r_escaped = r.rule_name.replace('"', '\\"')
+            cond_escaped = r.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
+            r_escaped = r.rule_name.replace("\\", "\\\\").replace('"', '\\"')
             failed_items.append(
                 f'                F.when(~F.expr("coalesce(({cond_escaped}), false)"), F.lit("{r_escaped}")),'
             )
@@ -429,7 +464,7 @@ def _detect_is_streaming(func_node: ast.FunctionDef) -> bool:
 
 
 def _hoist_imports_once(code: str, flavor: str = "dlt") -> str:
-    """Ensure required imports are hoisted once at top of code."""
+    """Ensure required imports are hoisted once below file headers/future imports."""
     needed_imports: list[str] = []
     if "from pyspark.sql import functions as F" not in code:
         needed_imports.append("from pyspark.sql import functions as F")
@@ -441,5 +476,42 @@ def _hoist_imports_once(code: str, flavor: str = "dlt") -> str:
     if not needed_imports:
         return code
 
-    header = "\n".join(needed_imports) + "\n\n"
-    return header + code
+    lines = code.splitlines(keepends=True)
+    insert_idx = 0
+
+    # Skip initial notebook comment e.g. # Databricks notebook source
+    while insert_idx < len(lines) and lines[insert_idx].strip().startswith("#"):
+        insert_idx += 1
+
+    # Skip blank lines before docstring
+    while insert_idx < len(lines) and not lines[insert_idx].strip():
+        insert_idx += 1
+
+    # Skip module docstring
+    if insert_idx < len(lines) and (
+        lines[insert_idx].strip().startswith('"""') or lines[insert_idx].strip().startswith("'''")
+    ):
+        quote = lines[insert_idx].strip()[:3]
+        if lines[insert_idx].strip().count(quote) >= 2 and len(lines[insert_idx].strip()) > 3:
+            insert_idx += 1
+        else:
+            insert_idx += 1
+            while insert_idx < len(lines) and quote not in lines[insert_idx]:
+                insert_idx += 1
+            if insert_idx < len(lines):
+                insert_idx += 1
+
+    # Skip future imports and blank lines
+    while insert_idx < len(lines):
+        line = lines[insert_idx].strip()
+        if not line or line.startswith("#") or line.startswith("from __future__"):
+            insert_idx += 1
+        else:
+            break
+
+    import_block = "\n".join(needed_imports) + "\n\n"
+    prefix = "".join(lines[:insert_idx])
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    suffix = "".join(lines[insert_idx:])
+    return prefix + import_block + suffix

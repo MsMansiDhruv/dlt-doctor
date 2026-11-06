@@ -207,7 +207,7 @@ def test_reproduce_cdc_scd2_placeholder_invalid_sql():
     import sqlglot
 
     cdc = CdcDoctor()
-    tmpl = cdc.generate_cdc_templates("silver_customers", ["id"], "updated_at")
+    tmpl = cdc.generate_cdc_templates("silver_customers", ["id"], "updated_at", value_cols=["name"])
     assert tmpl.scd2_merge_sql != ""
     # Literal ... in SQL will cause sqlglot parse failure
     try:
