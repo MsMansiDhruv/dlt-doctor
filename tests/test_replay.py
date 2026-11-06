@@ -56,19 +56,31 @@ def test_generate_replay_sql_recency_guard() -> None:
 
 
 def test_generate_replay_sql_marks_replayed_rows() -> None:
-    """Replay SQL must mark replayed records with _replayed_at."""
-    sql = generate_replay_sql(
+    """Replay SQL marks replayed records with _replayed_at only when mark_replayed=True."""
+    # Omitted by default to prevent target schema collision on UPDATE SET * / INSERT *
+    sql_default = generate_replay_sql(
         quarantine_table="bronze_quarantine",
         target_table="silver_orders",
         primary_keys=["order_id"],
     )
-    parsed = sqlglot.parse_one(sql, read="spark")
-    assert parsed is not None
-    assert "_replayed_at" in sql
+    parsed_default = sqlglot.parse_one(sql_default, read="spark")
+    assert parsed_default is not None
+    assert "_replayed_at" not in sql_default
+
+    # Explicitly enabled
+    sql_marked = generate_replay_sql(
+        quarantine_table="bronze_quarantine",
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        mark_replayed=True,
+    )
+    parsed_marked = sqlglot.parse_one(sql_marked, read="spark")
+    assert parsed_marked is not None
+    assert "_replayed_at" in sql_marked
 
 
 def test_generate_replay_sql_partition_pruning() -> None:
-    """Replay SQL should prune partitions when partition_col and partition_val are provided."""
+    """Replay SQL must include literal target-side predicate for Delta static partition pruning."""
     sql = generate_replay_sql(
         quarantine_table="bronze_quarantine",
         target_table="silver_orders",
@@ -79,7 +91,29 @@ def test_generate_replay_sql_partition_pruning() -> None:
     parsed = sqlglot.parse_one(sql, read="spark")
     assert parsed is not None
     assert "event_date = '2026-11-01'" in sql
-    assert "target.event_date = source.event_date" in sql
+    # Must have literal target-side predicate in ON clause:
+    assert "target.event_date = '2026-11-01'" in sql
+
+    # Numeric typed partition values
+    sql_int = generate_replay_sql(
+        quarantine_table="bronze_quarantine",
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        partition_col="year",
+        partition_val=2026,
+    )
+    assert "target.year = 2026" in sql_int
+
+
+def test_replay_partition_val_without_col_raises() -> None:
+    """Passing partition_val without partition_col must raise ValueError."""
+    with pytest.raises(ValueError, match="partition_val requires partition_col"):
+        generate_replay_sql(
+            quarantine_table="bronze_quarantine",
+            target_table="silver_orders",
+            primary_keys=["order_id"],
+            partition_val="2026-11-01",
+        )
 
 
 def test_cli_replay_partition_flags() -> None:

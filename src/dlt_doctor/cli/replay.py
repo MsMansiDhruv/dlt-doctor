@@ -35,8 +35,14 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--recency-col",
-        default="updated_at",
-        help="Timestamp column for recency guard (default: updated_at)",
+        default=None,
+        help="Timestamp column for recency guard (optional)",
+    )
+    p.add_argument(
+        "--mark-replayed",
+        action="store_true",
+        default=False,
+        help="Inject _replayed_at timestamp into source rows (requires target table to have column)",
     )
     p.add_argument(
         "--partition-col",
@@ -62,6 +68,7 @@ def handle(args: argparse.Namespace) -> int:
             recency_col=args.recency_col,
             partition_col=args.partition_col,
             partition_val=args.partition_val,
+            mark_replayed=args.mark_replayed,
         )
     except ValueError as exc:
         import sys

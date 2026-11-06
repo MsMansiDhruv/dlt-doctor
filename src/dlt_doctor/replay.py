@@ -33,9 +33,10 @@ def generate_replay_sql(
     rule_name: str | None = None,
     start_time: str | None = None,
     end_time: str | None = None,
-    recency_col: str | None = "updated_at",
+    recency_col: str | None = None,
     partition_col: str | None = None,
-    partition_val: str | None = None,
+    partition_val: str | int | float | bool | None = None,
+    mark_replayed: bool = False,
 ) -> str:
     """Generate idempotent Delta MERGE SQL to reprocess quarantined records.
 
@@ -51,10 +52,23 @@ def generate_replay_sql(
     landing area) with updated sequence/watermark values so the pipeline processes them
     natively through its standard lineage.
     """
+    if partition_val is not None and not partition_col:
+        raise ValueError("partition_val requires partition_col to be specified.")
+
     clean_quarantine = _validate_identifier(quarantine_table)
     clean_target = _validate_identifier(target_table)
     clean_keys = [_validate_identifier(k) for k in primary_keys]
     clean_part = _validate_identifier(partition_col) if partition_col else None
+
+    formatted_val = ""
+    if partition_val is not None:
+        if isinstance(partition_val, bool):
+            formatted_val = "true" if partition_val else "false"
+        elif isinstance(partition_val, (int, float)):
+            formatted_val = str(partition_val)
+        else:
+            escaped_val = str(partition_val).replace("'", "''")
+            formatted_val = f"'{escaped_val}'"
 
     conditions: list[str] = []
     if rule_name:
@@ -66,14 +80,15 @@ def generate_replay_sql(
     if end_time:
         valid_end = _validate_iso_timestamp(end_time, "end_time")
         conditions.append(f"_quarantined_at <= '{valid_end}'")
-    if clean_part and partition_val:
-        escaped_val = partition_val.replace("'", "''")
-        conditions.append(f"{clean_part} = '{escaped_val}'")
+    if clean_part and partition_val is not None:
+        conditions.append(f"{clean_part} = {formatted_val}")
 
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     join_predicates = [f"target.{k} = source.{k}" for k in clean_keys]
     if clean_part:
         join_predicates.append(f"target.{clean_part} = source.{clean_part}")
+        if partition_val is not None:
+            join_predicates.append(f"target.{clean_part} = {formatted_val}")
     pk_join = " AND ".join(join_predicates)
     partition_cols = ", ".join(clean_keys)
 
@@ -82,13 +97,16 @@ def generate_replay_sql(
         clean_recency = _validate_identifier(recency_col)
         recency_guard = f" AND (target.{clean_recency} IS NULL OR source.{clean_recency} >= target.{clean_recency})"
 
+    select_clause = "* EXCEPT (_failed_rules, _quarantined_at)"
+    if mark_replayed:
+        select_clause += ",\n           current_timestamp() AS _replayed_at"
+
     lines = [
         "-- Replay SQL: Reprocess quarantined records into target table idempotently",
         "-- Note: Prefer re-feeding corrected rows into the upstream source stream rather than direct DML.",
         f"MERGE INTO {clean_target} AS target",
         "USING (",
-        "    SELECT * EXCEPT (_failed_rules, _quarantined_at),",
-        "           current_timestamp() AS _replayed_at",
+        f"    SELECT {select_clause}",
         f"    FROM {clean_quarantine}{where_clause}",
         f"    QUALIFY row_number() OVER (PARTITION BY {partition_cols} ORDER BY _quarantined_at DESC) = 1",
         ") AS source",
