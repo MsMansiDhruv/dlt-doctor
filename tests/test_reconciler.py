@@ -115,7 +115,25 @@ def test_restate_composite_match_keys() -> None:
     assert parsed is not None
 
 
-def test_cli_restate_multi_keys() -> None:
+def test_restate_null_safe_keys() -> None:
+    """When null_safe_keys=True, use <=> operator to match NULLs safely."""
+    doctor = RestatementDoctor()
+    scope = doctor.calculate_blast_radius(
+        target_table="gold_orders",
+        late_date_iso="2026-11-01",
+        window_size_days=3,
+        source_table="custom_recalculated",
+        partition_col="event_date",
+        match_key=["tenant_id", "order_id"],
+        null_safe_keys=True,
+    )
+    assert "target.tenant_id <=> source.tenant_id" in scope.delta_merge_sql
+    assert "target.order_id <=> source.order_id" in scope.delta_merge_sql
+    parsed = sqlglot.parse_one(scope.delta_merge_sql, read="spark")
+    assert parsed is not None
+
+
+def test_cli_restate_multi_keys_and_null_safe() -> None:
     from unittest.mock import patch
 
     from dlt_doctor.cli import main
@@ -132,6 +150,7 @@ def test_cli_restate_multi_keys() -> None:
         "--match-key",
         "account_id",
         "order_id",
+        "--null-safe-keys",
     ]
     with patch("sys.argv", test_args):
         exit_code = main()

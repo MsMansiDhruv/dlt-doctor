@@ -32,6 +32,12 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help="Enable WHEN NOT MATCHED BY SOURCE ... THEN DELETE (WARNING: permanently deletes unmatched target rows in window)",
     )
+    p.add_argument(
+        "--null-safe-keys",
+        action="store_true",
+        default=False,
+        help="Use Spark NULL-safe equality (<=>) for match keys to handle NULL values safely",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -47,6 +53,7 @@ def handle(args: argparse.Namespace) -> int:
             match_key=args.match_key,
             source_table=args.source,
             delete_unmatched=delete_unmatched,
+            null_safe_keys=args.null_safe_keys,
         )
     except ValueError as exc:
         import sys

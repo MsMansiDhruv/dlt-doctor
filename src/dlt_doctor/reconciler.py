@@ -56,12 +56,19 @@ class RestatementDoctor:
         target_table: str,
         late_date_iso: str,
         window_size_days: int,
+        source_table: str,
         partition_col: str = "order_date",
         match_key: str | list[str] = "id",
-        source_table: str | None = None,
         delete_unmatched: bool = False,
+        null_safe_keys: bool = False,
     ) -> BlastRadiusScope:
-        """Calculate the exact affected partition window [t_late, t_late + W - 1]."""
+        """Calculate the exact affected partition window [t_late, t_late + W - 1].
+
+        Note on Primary Keys:
+        Standard equality (=) treats NULL keys as non-matching in SQL three-valued logic,
+        which can cause duplicate inserts when rows have NULL in any key column.
+        Enable `null_safe_keys=True` to use Spark null-safe equality (<=>).
+        """
         if window_size_days < 1:
             raise ValueError(f"window_size_days must be at least 1, got {window_size_days}.")
 
@@ -77,7 +84,8 @@ class RestatementDoctor:
         else:
             keys_list = list(match_key)
         clean_keys = [_validate_identifier(k) for k in keys_list]
-        pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
+        eq_op = "<=>" if null_safe_keys else "="
+        pk_join = " AND ".join(f"target.{k} {eq_op} source.{k}" for k in clean_keys)
 
         t_late = datetime.date.fromisoformat(late_date_iso)
         t_end = t_late + datetime.timedelta(days=window_size_days - 1)
