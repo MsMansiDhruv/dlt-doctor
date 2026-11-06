@@ -44,6 +44,7 @@ class CdcDoctor:
         source_is_cdf: bool = True,
         value_cols: list[str] | None = None,
         source_stream: str | None = None,
+        include_auto_cdc: bool = False,
     ) -> CdcMergeTemplate:
         """Generate deduplication and MERGE patterns to eliminate multiple-match errors."""
         clean_target = _validate_identifier(target_table)
@@ -52,15 +53,11 @@ class CdcDoctor:
         clean_seq = _validate_identifier(sequence_col)
         clean_part = _validate_identifier(partition_col) if partition_col else None
         clean_values = [_validate_identifier(v) for v in value_cols] if value_cols else []
-        clean_source = (
-            _validate_identifier(source_stream)
-            if source_stream
-            else (
-                f"{clean_target.split('.')[-1]}_cdc_stream"
-                if "." in clean_target
-                else "source_cdc_stream"
-            )
-        )
+
+        if include_auto_cdc and not source_stream:
+            raise ValueError("source_stream must be provided when auto_cdc_code is requested.")
+
+        clean_source = _validate_identifier(source_stream) if source_stream else ""
 
         pk_str = ", ".join(f"'{k}'" for k in clean_keys)
         pk_join = " AND ".join(f"target.{k} = source.{k}" for k in clean_keys)
@@ -151,23 +148,27 @@ class CdcDoctor:
         )
 
         auto_cdc_code = (
-            "# Modern Databricks Lakeflow Declarative CDC pattern (Recommended)\n"
-            "import dlt\n"
-            "from pyspark.sql import functions as F\n\n"
-            "# 1. Declare target streaming table before applying changes\n"
-            "dlt.create_streaming_table(\n"
-            f"    name='{clean_target}'\n"
-            ")\n\n"
-            "# 2. Declare CDC flow into streaming table\n"
-            "dlt.apply_changes(\n"
-            f"    target='{clean_target}',\n"
-            f"    source='{clean_source}',\n"
-            f"    keys=[{pk_str}],\n"
-            f"    sequence_by=F.col('{clean_seq}'),\n"
-            "    apply_as_deletes=F.expr(\"_change_type = 'delete'\"),\n"
-            "    except_column_list=['_change_type', '_commit_version', '_commit_timestamp'],\n"
-            "    stored_as_scd_type='1'  # or '2' for historical dimensional tracking\n"
-            ")\n"
+            (
+                "# Modern Databricks Lakeflow Declarative CDC pattern (Recommended)\n"
+                "import dlt\n"
+                "from pyspark.sql import functions as F\n\n"
+                "# 1. Declare target streaming table before applying changes\n"
+                "dlt.create_streaming_table(\n"
+                f"    name='{clean_target}'\n"
+                ")\n\n"
+                "# 2. Declare CDC flow into streaming table\n"
+                "dlt.apply_changes(\n"
+                f"    target='{clean_target}',\n"
+                f"    source='{clean_source}',\n"
+                f"    keys=[{pk_str}],\n"
+                f"    sequence_by=F.col('{clean_seq}'),\n"
+                "    apply_as_deletes=F.expr(\"_change_type = 'delete'\"),\n"
+                "    except_column_list=['_change_type', '_commit_version', '_commit_timestamp'],\n"
+                "    stored_as_scd_type='1'  # or '2' for historical dimensional tracking\n"
+                ")\n"
+            )
+            if clean_source
+            else ""
         )
 
         return CdcMergeTemplate(

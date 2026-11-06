@@ -168,7 +168,9 @@ def test_reproduce_generated_quarantine_code_syntax():
     """
     doctor = ExpectationDoctor()
     rules = [ExpectationRule(rule_name="valid_amount", condition_sql="amount > 0")]
-    plan = doctor.build_quarantine_routing("main.silver.orders", rules)
+    plan = doctor.build_quarantine_routing(
+        "main.silver.orders", rules, source_table="source_bronze"
+    )
     code = doctor.generate_dlt_decorator_code(plan)
     import ast
 
@@ -218,7 +220,11 @@ def test_reproduce_restate_missing_delete_unmatched():
     """Bug: restate SQL lacks WHEN NOT MATCHED BY SOURCE ... THEN DELETE."""
     reconciler = RestatementDoctor()
     scope = reconciler.calculate_blast_radius(
-        "silver_orders", "2026-11-01", 7, delete_unmatched=True
+        "silver_orders",
+        "2026-11-01",
+        7,
+        source_table="source_recalculated",
+        delete_unmatched=True,
     )
     assert "WHEN NOT MATCHED BY SOURCE" in scope.delta_merge_sql, (
         f"Restatement SQL missing WHEN NOT MATCHED BY SOURCE: {scope.delta_merge_sql}"

@@ -98,6 +98,8 @@ def test_auto_cdc_creates_streaming_table() -> None:
     template = doctor.generate_cdc_templates(
         target_table="silver_orders",
         primary_keys=["order_id"],
+        source_stream="bronze_orders_cdc",
+        include_auto_cdc=True,
     )
     code = template.auto_cdc_code
 
@@ -109,6 +111,17 @@ def test_auto_cdc_creates_streaming_table() -> None:
     assert "dlt.create_streaming_table" in code
     assert "dlt.apply_changes" in code
     assert code.index("dlt.create_streaming_table") < code.index("dlt.apply_changes")
+
+
+def test_auto_cdc_requires_source_stream() -> None:
+    """When auto_cdc_code is requested (include_auto_cdc=True), source_stream is required."""
+    doctor = CdcDoctor()
+    with pytest.raises(ValueError, match="source_stream must be provided"):
+        doctor.generate_cdc_templates(
+            target_table="silver_orders",
+            primary_keys=["order_id"],
+            include_auto_cdc=True,
+        )
 
 
 def test_cdc_custom_source_stream_and_template_attributes() -> None:

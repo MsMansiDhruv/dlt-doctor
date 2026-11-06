@@ -14,6 +14,7 @@ def test_calculate_blast_radius_math() -> None:
         target_table="main.gold.fact_orders",
         late_date_iso="2026-10-25",
         window_size_days=7,
+        source_table="source_recalculated",
         partition_col="order_date",
         match_key="order_id",
     )
@@ -24,27 +25,48 @@ def test_calculate_blast_radius_math() -> None:
     assert "MERGE INTO main.gold.fact_orders" in scope.delta_merge_sql
 
 
+def test_calculate_blast_radius_requires_source_table() -> None:
+    doctor = RestatementDoctor()
+    with pytest.raises(ValueError, match="source_table must be provided"):
+        doctor.calculate_blast_radius(
+            target_table="gold_orders",
+            late_date_iso="2026-11-01",
+            window_size_days=3,
+            source_table=None,  # type: ignore[arg-type]
+        )
+
+
 def test_validate_window_size_days_minimum() -> None:
     """RestatementDoctor must validate that window_size_days is >= 1."""
     doctor = RestatementDoctor()
     with pytest.raises(ValueError, match="window_size_days must be at least 1"):
-        doctor.calculate_blast_radius("gold_orders", "2026-11-01", 0)
+        doctor.calculate_blast_radius(
+            "gold_orders", "2026-11-01", 0, source_table="source_recalculated"
+        )
 
     with pytest.raises(ValueError, match="window_size_days must be at least 1"):
-        doctor.calculate_blast_radius("gold_orders", "2026-11-01", -3)
+        doctor.calculate_blast_radius(
+            "gold_orders", "2026-11-01", -3, source_table="source_recalculated"
+        )
 
 
 def test_delete_unmatched_defaults_false_and_warns_when_enabled() -> None:
     """delete_unmatched must default to False, and emit a loud warning when explicitly enabled."""
     doctor = RestatementDoctor()
     # Default is False: no delete clause
-    scope_default = doctor.calculate_blast_radius("gold_orders", "2026-11-01", 7)
+    scope_default = doctor.calculate_blast_radius(
+        "gold_orders", "2026-11-01", 7, source_table="source_recalculated"
+    )
     assert "WHEN NOT MATCHED BY SOURCE" not in scope_default.delta_merge_sql
 
     # When enabled: warns and includes delete clause
     with pytest.warns(UserWarning, match="delete_unmatched is enabled"):
         scope_warn = doctor.calculate_blast_radius(
-            "gold_orders", "2026-11-01", 7, delete_unmatched=True
+            "gold_orders",
+            "2026-11-01",
+            7,
+            source_table="source_recalculated",
+            delete_unmatched=True,
         )
     assert "WHEN NOT MATCHED BY SOURCE" in scope_warn.delta_merge_sql
 
@@ -53,7 +75,11 @@ def test_restate_merge_stops_inserting_out_of_window_source_rows() -> None:
     """Restatement MERGE must restrict NOT MATCHED insert to in-window source rows."""
     doctor = RestatementDoctor()
     scope = doctor.calculate_blast_radius(
-        "gold_orders", "2026-11-01", 7, partition_col="order_date"
+        "gold_orders",
+        "2026-11-01",
+        7,
+        source_table="source_recalculated",
+        partition_col="order_date",
     )
     sql = scope.delta_merge_sql
 
@@ -68,27 +94,28 @@ def test_restate_merge_stops_inserting_out_of_window_source_rows() -> None:
     )
 
 
-def test_restate_composite_match_keys_and_dynamic_source() -> None:
-    """RestatementDoctor must support composite match keys and dynamically default source_table."""
+def test_restate_composite_match_keys() -> None:
+    """RestatementDoctor must support composite match keys."""
     doctor = RestatementDoctor()
     scope = doctor.calculate_blast_radius(
         target_table="gold_orders",
         late_date_iso="2026-11-01",
         window_size_days=3,
+        source_table="custom_recalculated",
         partition_col="event_date",
         match_key=["tenant_id", "order_id"],
     )
-    assert scope.source_table == "gold_orders_recalculated"
+    assert scope.source_table == "custom_recalculated"
     assert scope.match_keys == ["tenant_id", "order_id"]
     assert "target.tenant_id = source.tenant_id" in scope.delta_merge_sql
     assert "target.order_id = source.order_id" in scope.delta_merge_sql
-    assert "USING gold_orders_recalculated AS source" in scope.delta_merge_sql
+    assert "USING custom_recalculated AS source" in scope.delta_merge_sql
 
     parsed = sqlglot.parse_one(scope.delta_merge_sql, read="spark")
     assert parsed is not None
 
 
-def test_cli_restate_multi_keys_and_dynamic_source() -> None:
+def test_cli_restate_multi_keys() -> None:
     from unittest.mock import patch
 
     from dlt_doctor.cli import main
@@ -100,6 +127,8 @@ def test_cli_restate_multi_keys_and_dynamic_source() -> None:
         "main.gold.fact_orders",
         "--late-date",
         "2026-10-25",
+        "--source",
+        "recalculated_orders",
         "--match-key",
         "account_id",
         "order_id",

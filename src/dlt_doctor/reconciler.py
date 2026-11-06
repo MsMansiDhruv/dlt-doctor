@@ -65,16 +65,11 @@ class RestatementDoctor:
         if window_size_days < 1:
             raise ValueError(f"window_size_days must be at least 1, got {window_size_days}.")
 
+        if not source_table:
+            raise ValueError("source_table must be provided for blast radius calculation.")
+
         clean_target = _validate_identifier(target_table)
-        clean_source = (
-            _validate_identifier(source_table)
-            if source_table
-            else (
-                f"{clean_target.split('.')[-1]}_recalculated"
-                if "." in clean_target
-                else f"{clean_target}_recalculated"
-            )
-        )
+        clean_source = _validate_identifier(source_table)
         clean_part = _validate_identifier(partition_col)
 
         if isinstance(match_key, str):

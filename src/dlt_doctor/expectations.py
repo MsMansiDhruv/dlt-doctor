@@ -169,11 +169,11 @@ class ExpectationDoctor:
         In Databricks Lakeflow Declarative Pipelines (`from pyspark import pipelines as dp`),
         `dp.read_stream` does not exist. Stream ingestion uses `spark.readStream.table(...)`.
         """
-        resolved_source = (
-            source_table
-            or routing_plan.source_table
-            or f"{routing_plan.target_clean_table}_staged_source"
-        )
+        resolved_source = source_table or routing_plan.source_table
+        if not resolved_source:
+            raise ValueError(
+                "source_table must be provided either in build_quarantine_routing or in generate_pipeline_code."
+            )
         clean_func = _safe_identifier(routing_plan.target_clean_table)
         quarantine_func = _safe_identifier(routing_plan.target_quarantine_table)
         staging_view_name = f"{routing_plan.target_clean_table}_staged"

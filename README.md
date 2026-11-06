@@ -195,7 +195,7 @@ dlt-doctor rules
 dlt-doctor explain DD001
 
 # Calculate late-arriving partition blast radius and emit pruned MERGE SQL
-dlt-doctor restate --table main.gold.orders --late-date 2026-10-25 --window 7
+dlt-doctor restate --table main.gold.orders --late-date 2026-10-25 --window 7 --source main.silver.orders_recalculated
 
 # Generate streaming CDC deduplication and SCD merge templates
 dlt-doctor cdc --table main.silver.customers --keys customer_id --event-time updated_at
@@ -316,6 +316,7 @@ scope = reconciler.calculate_blast_radius(
     target_table="main.gold.fact_orders",
     late_date_iso="2026-10-25",
     window_size_days=7,
+    source_table="main.silver.orders_recalculated",
     partition_col="order_date",
     match_key="order_id",
 )

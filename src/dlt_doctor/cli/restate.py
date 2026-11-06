@@ -23,8 +23,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--source",
-        default=None,
-        help="Source staging table (default: <table_prefix>_recalculated)",
+        required=True,
+        help="Source staging table",
     )
     p.add_argument(
         "--delete-unmatched",

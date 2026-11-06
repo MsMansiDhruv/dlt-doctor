@@ -176,14 +176,13 @@ def test_quarantine_routing_custom_source_and_quarantine_tables() -> None:
     assert "source_bronze" not in code
 
 
-def test_quarantine_routing_dynamic_fallback_no_hardcoded_bronze() -> None:
-    """When source_table is omitted, generate_pipeline_code should dynamically fallback to table-derived name rather than source_bronze."""
+def test_generate_pipeline_code_requires_source_table() -> None:
+    """When source_table is omitted both in routing_plan and generate_pipeline_code, raise ValueError."""
     doctor = ExpectationDoctor()
     rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
     plan = doctor.build_quarantine_routing("my_clean_table", rules)
-    code = plan.generate_pipeline_code()
-    assert "source_bronze" not in code
-    assert "my_clean_table_staged_source" in code
+    with pytest.raises(ValueError, match="source_table must be provided"):
+        plan.generate_pipeline_code()
 
 
 def test_quarantine_routing_plan_to_dict_includes_source_table() -> None:

@@ -80,6 +80,7 @@ def test_readme_act3_execution() -> None:
         target_table="main.gold.fact_orders",
         late_date_iso="2026-10-25",
         window_size_days=7,
+        source_table="main.silver.orders_recalculated",
         partition_col="order_date",
         match_key="order_id",
     )

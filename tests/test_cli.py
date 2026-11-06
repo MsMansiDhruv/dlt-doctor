@@ -44,6 +44,8 @@ def test_cli_restate() -> None:
         "2026-10-25",
         "--window",
         "7",
+        "--source",
+        "source_recalculated",
     ]
     with patch("sys.argv", test_args):
         exit_code = main()
