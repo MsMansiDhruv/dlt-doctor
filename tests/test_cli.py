@@ -299,3 +299,48 @@ def users():
     with patch("sys.argv", check_args):
         exit_code = main()
         assert exit_code == 0
+
+
+def test_cli_heal_exit_code_3_cannot_heal(tmp_path: Path) -> None:
+    """When a file has dynamic expectations that cannot be resolved, exit code is 3."""
+    code = """import dlt
+@dlt.table
+@dlt.expect_all_or_drop(fetch_remote_rules())
+def dynamic_pipe():
+    return dlt.read_stream("bronze")
+"""
+    pipeline_file = tmp_path / "unhealable.py"
+    pipeline_file.write_text(code, encoding="utf-8")
+
+    check_args = ["dlt-doctor", "heal", str(pipeline_file), "--check"]
+    with patch("sys.argv", check_args):
+        exit_code = main()
+        assert exit_code == 3
+
+
+def test_cli_heal_directory_support(tmp_path: Path) -> None:
+    """heal command must support directories for CI gates."""
+    pipe_dir = tmp_path / "pipes"
+    pipe_dir.mkdir()
+    (pipe_dir / "p1.py").write_text(
+        """import dlt
+@dlt.table
+@dlt.expect_or_drop("v1", "x > 0")
+def p1():
+    return dlt.read_stream("s1")
+""",
+        encoding="utf-8",
+    )
+    (pipe_dir / "p2.py").write_text("import dlt\n# already compliant", encoding="utf-8")
+
+    # In check mode, directory with unhealed file exits 1
+    with patch("sys.argv", ["dlt-doctor", "heal", str(pipe_dir), "--check"]):
+        assert main() == 1
+
+    # In write mode, directory heals files and exits 0
+    with patch("sys.argv", ["dlt-doctor", "heal", str(pipe_dir), "--write"]):
+        assert main() == 0
+
+    # Running --check on now-healed directory exits 0
+    with patch("sys.argv", ["dlt-doctor", "heal", str(pipe_dir), "--check"]):
+        assert main() == 0

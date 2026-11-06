@@ -187,8 +187,16 @@ dlt-doctor analyze notebooks/01_ingest.ipynb
 dlt-doctor analyze src/pipelines/orders.sql
 dlt-doctor analyze src/pipelines --format markdown
 
-# Auto-heal expect_or_drop anti-patterns into single-pass quarantine streams
+# Auto-heal expect_or_drop anti-patterns into single-pass quarantine streams (preview diff)
 dlt-doctor heal src/pipelines/orders_silver.py
+
+# Apply healed quarantine routing directly to file or directory
+dlt-doctor heal src/pipelines/orders_silver.py --write
+dlt-doctor heal src/pipelines/ --write
+
+# CI Compliance Gate: Check files or entire directory for unhealed drop rules
+# Exit codes: 0 = Compliant, 1 = Needs healing, 2 = Usage/path error, 3 = Cannot heal
+dlt-doctor heal src/pipelines/ --check
 
 # List and explain diagnostic rules
 dlt-doctor rules

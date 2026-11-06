@@ -36,14 +36,52 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
 def handle(args: argparse.Namespace) -> int:
     target = Path(args.path)
     if not target.exists():
-        print(f"Error: File not found: {target}", file=sys.stderr)
-        return 2
-
-    if target.is_dir():
-        print("Error: 'heal' must be executed on a specific file.", file=sys.stderr)
+        print(f"Error: Path not found: {target}", file=sys.stderr)
         return 2
 
     write_mode = args.write and not args.check
+
+    if target.is_dir():
+        py_files = sorted(target.rglob("*.py"))
+        if not py_files:
+            print(f"No Python files found in directory {target}")
+            return 0
+
+        needs_healing: list[tuple[Path, str]] = []
+        cannot_heal: list[tuple[Path, str]] = []
+
+        for f in py_files:
+            res = heal_file(
+                f,
+                write=write_mode,
+                quarantine_suffix=args.quarantine_suffix,
+            )
+            if not res.can_heal:
+                cannot_heal.append((f, res.reason))
+            elif res.diff:
+                needs_healing.append((f, res.diff))
+
+        if cannot_heal:
+            for f, reason in cannot_heal:
+                print(f"Cannot auto-heal {f.name}: {reason}", file=sys.stderr)
+            return 3
+
+        if needs_healing:
+            if args.check:
+                for f, diff in needs_healing:
+                    print(f"File {f.name} needs healing:\n{diff}")
+                return 1
+            if write_mode:
+                for f, diff in needs_healing:
+                    print(f"Applied zero-loss quarantine routing to {f.name}:\n{diff}")
+                return 0
+            for f, diff in needs_healing:
+                print(f"Unified Diff for {f.name} (run with --write to apply):\n{diff}")
+            return 0
+
+        print(f"All {len(py_files)} files in {target} are compliant.")
+        return 0
+
     res = heal_file(
         target,
         write=write_mode,
@@ -51,7 +89,7 @@ def handle(args: argparse.Namespace) -> int:
     )
     if not res.can_heal:
         print(f"Cannot auto-heal: {res.reason}", file=sys.stderr)
-        return 1
+        return 3
 
     if res.diff:
         if args.check:
