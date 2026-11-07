@@ -159,7 +159,7 @@ def generate_healed_pipeline_nodes(
     warn_rules = [r for r in rules if r.action_on_failure == "warn"]
     fail_rules = [r for r in rules if r.action_on_failure == "fail"]
 
-    # Retain metrics in event log: keep retain-only @expect_all on staged view
+    # Retain metrics in event log: keep retain-only @expect_all on staged view below the view decorator
     if quarantine_rules:
         entries: list[str] = []
         for r in quarantine_rules:
@@ -167,7 +167,7 @@ def generate_healed_pipeline_nodes(
             c_esc = r.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
             entries.append(f'        "{r_esc}": "{c_esc}",')
         dict_body = "{\n" + "\n".join(entries) + "\n    }"
-        staged_decs = f"@{pkg}.expect_all({dict_body})\n{view_dec}"
+        staged_decs = f"{view_dec}\n@{pkg}.expect_all({dict_body})"
     else:
         staged_decs = view_dec
 

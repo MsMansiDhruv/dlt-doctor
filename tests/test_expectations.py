@@ -1,6 +1,8 @@
 """Tests for ExpectationDoctor DLT quarantine routing."""
 
 import ast
+import sys
+import types
 from typing import Any
 
 import pytest
@@ -287,3 +289,115 @@ def test_pyspark_integration_quarantine_partition(spark: Any) -> None:
     assert clean_rows + quarantine_rows == total_rows
     assert clean_rows == 1  # only (1, 100)
     assert quarantine_rows == 3
+
+
+class ProxyReader:
+    def __init__(self, tables: dict[str, Any]) -> None:
+        self.tables = tables
+
+    def table(self, name: str) -> Any:
+        clean_name = name.strip("`")
+        return self.tables[clean_name]
+
+
+class ProxySpark:
+    def __init__(self, tables: dict[str, Any]) -> None:
+        self.tables = tables
+        self.read = ProxyReader(tables)
+        self.readStream = ProxyReader(tables)
+
+
+class StubDP:
+    def __init__(self, tables: dict[str, Any]) -> None:
+        self.tables = tables
+
+    def _decorator(self, *args: Any, **kwargs: Any) -> Any:
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            return args[0]
+
+        def inner(fn: Any) -> Any:
+            return fn
+
+        return inner
+
+    def __getattr__(self, name: str) -> Any:
+        if name in {
+            "table",
+            "view",
+            "temporary_view",
+            "materialized_view",
+            "expect",
+            "expect_all",
+            "expect_or_fail",
+            "expect_all_or_fail",
+        }:
+            return self._decorator
+        raise AttributeError(f"StubDP has no attribute {name}")
+
+
+@pytest.mark.integration
+def test_pyspark_integration_dp_flavor_pipeline_execution(
+    spark: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execute synthesized dp-flavor pipeline on real Spark DataFrames via proxy spark and stub dp."""
+    data = [(1, 100), (2, None), (3, -10), (None, 50)]
+    source_df = spark.createDataFrame(data, ["id", "amount"])
+
+    doctor = ExpectationDoctor()
+    rules = [
+        ExpectationRule("valid_id", "id IS NOT NULL", action_on_failure="quarantine"),
+        ExpectationRule("positive_amount", "amount > 0", action_on_failure="drop"),
+        ExpectationRule("warn_small", "amount < 1000", action_on_failure="warn"),
+    ]
+    plan = doctor.build_quarantine_routing("silver_orders", rules)
+    pipeline_code = doctor.generate_pipeline_code(plan, source_table="bronze_orders", flavor="dp")
+
+    # Assert decorator order: dataset decorator is above expectation decorator
+    assert '@dp.temporary_view(name="silver_orders_staged")\n@dp.expect_all({' in pipeline_code
+    assert '@dp.expect("warn_small"' in pipeline_code
+
+    # Execute with proxy spark and stub dp
+    tables: dict[str, Any] = {"bronze_orders": source_df}
+    proxy_spark = ProxySpark(tables)
+    stub_dp = StubDP(tables)
+
+    fake_dp_module = types.ModuleType("pyspark.pipelines")
+    for attr in [
+        "temporary_view",
+        "table",
+        "view",
+        "expect_all",
+        "expect",
+        "expect_or_fail",
+        "expect_all_or_fail",
+    ]:
+        setattr(fake_dp_module, attr, getattr(stub_dp, attr))
+
+    monkeypatch.setitem(sys.modules, "pyspark.pipelines", fake_dp_module)
+
+    from pyspark.sql import functions as F
+
+    exec_env = {
+        "dp": stub_dp,
+        "spark": proxy_spark,
+        "F": F,
+    }
+    exec(pipeline_code, exec_env)
+
+    # Invoke staged, clean, and quarantine functions
+    staged_fn = exec_env["silver_orders_staged"]
+    clean_fn = exec_env["silver_orders"]
+    quarantine_fn = exec_env["silver_orders_quarantine"]
+
+    staged_df = staged_fn()
+    tables["silver_orders_staged"] = staged_df
+
+    clean_df = clean_fn()
+    quarantine_df = quarantine_fn()
+
+    clean_rows = clean_df.collect()
+    quarantine_rows = quarantine_df.collect()
+
+    assert len(clean_rows) + len(quarantine_rows) == 4
+    assert [(r.id, r.amount) for r in clean_rows] == [(1, 100)]
+    assert len(quarantine_rows) == 3
