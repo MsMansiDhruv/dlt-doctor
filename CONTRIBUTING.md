@@ -46,6 +46,23 @@ Before submitting a pull request, ensure all checks pass:
   pytest
   ```
 
+## Integration Testing with PySpark & Delta Lake
+
+To run the integration test suite (`pytest -m integration` or `REQUIRE_SPARK=1 pytest`):
+
+1. **Java Runtime**: Java 11 or 17 must be installed. Set `JAVA_HOME` pointing to your JDK home directory:
+   - On Linux/macOS: `export JAVA_HOME=/usr/lib/jvm/java-17-openjdk`
+   - On Windows (PowerShell): `$env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17.0.x"`
+
+2. **Windows Hadoop Native Libraries (`winutils.exe`)**:
+   On Windows, Apache Spark requires `winutils.exe` and `hadoop.dll`. Set `HADOOP_HOME`:
+   - `$env:HADOOP_HOME="C:\hadoop"` (with `winutils.exe` located under `$env:HADOOP_HOME\bin`).
+
+3. **Running Integration Tests**:
+   ```bash
+   REQUIRE_SPARK=1 pytest -m integration -v
+   ```
+
 ## Commit Guidelines
 
 - Use conventional commits format (e.g. `feat(rules): ...`, `fix(expectations): ...`, `docs: ...`).

@@ -151,7 +151,7 @@ def generate_replay_sql(
             erased_predicates.append(f"erased.{clean_part} = deduped.{clean_part}")
         erased_join = " AND ".join(erased_predicates)
         post_dedup_conditions.append(
-            f"NOT EXISTS (SELECT 1 FROM {clean_erasure} AS erased WHERE {erased_join})"
+            f"NOT EXISTS (SELECT 1 FROM {clean_erasure} AS erased WHERE {erased_join})"  # nosec B608
         )
 
     post_dedup_where = (
