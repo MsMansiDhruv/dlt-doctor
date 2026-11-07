@@ -72,4 +72,5 @@ nav:
   - Articles & Deep Dives:
       - Zero-Loss DLT Quarantine: articles/zero_loss_quarantine.md
   - GitHub Action: github-action.md
+  - Configuration: configuration.md
   - Limitations: limitations.md
