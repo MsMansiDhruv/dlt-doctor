@@ -1,6 +1,7 @@
 """Tests for ExpectationDoctor DLT quarantine routing."""
 
 import ast
+from typing import Any
 
 import pytest
 
@@ -196,40 +197,93 @@ def test_quarantine_routing_plan_to_dict_includes_source_table() -> None:
     assert d["target_quarantine_table"] == "tbl_quarantine"
 
 
-@pytest.mark.integration
-def test_pyspark_integration_quarantine_partition() -> None:
-    """Verify NULL-safe partition property using a local PySpark session if available."""
-    try:
-        from pyspark.sql import SparkSession
-    except ImportError:
-        pytest.skip("PySpark is not installed; skipping integration test.")
+def test_staged_view_retains_expect_all_for_event_log_metrics() -> None:
+    """Staged view must retain @dlt.expect_all (or @dp.expect_all) to preserve event-log metrics."""
+    doctor = ExpectationDoctor()
+    rules = [
+        ExpectationRule("valid_id", "id IS NOT NULL", action_on_failure="quarantine"),
+        ExpectationRule("positive_amt", "amount > 0", action_on_failure="drop"),
+    ]
+    plan = doctor.build_quarantine_routing("orders", rules)
+    code = doctor.generate_pipeline_code(plan, source_table="bronze", flavor="dlt")
 
-    spark = (
-        SparkSession.builder.master("local[1]")
-        .appName("dlt-doctor-test")
-        .config("spark.ui.enabled", "false")
-        .getOrCreate()
+    assert "@dlt.expect_all({" in code
+    assert '"valid_id": "id IS NOT NULL"' in code
+    assert '"positive_amt": "amount > 0"' in code
+
+
+def test_clean_table_emits_warn_and_fail_expectations() -> None:
+    """Clean table must emit @expect for warn rules and @expect_or_fail for fail rules."""
+    doctor = ExpectationDoctor()
+    rules = [
+        ExpectationRule("check_warn", "discount < 0.5", action_on_failure="warn"),
+        ExpectationRule("check_fail", "total > 0", action_on_failure="fail"),
+        ExpectationRule("check_quarantine", "id IS NOT NULL", action_on_failure="quarantine"),
+    ]
+    plan = doctor.build_quarantine_routing("orders", rules)
+    code = doctor.generate_pipeline_code(plan, source_table="bronze", flavor="dlt")
+
+    assert '@dlt.expect("check_warn", "discount < 0.5")' in code
+    assert '@dlt.expect_or_fail("check_fail", "total > 0")' in code
+    # Quarantine rule must be in expect_all on staged view, not standalone on clean table
+    assert '@dlt.expect_or_fail("check_quarantine"' not in code
+
+
+def test_quarantine_table_copies_retention_table_properties() -> None:
+    """Quarantine table decorator must copy retention-related table properties while discarding unrelated ones."""
+    doctor = ExpectationDoctor()
+    rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
+    table_props = {
+        "delta.deletedFileRetentionDuration": "interval 30 days",
+        "delta.enableChangeDataFeed": "true",
+        "delta.logRetentionDuration": "interval 60 days",
+        "custom_team": "analytics",
+    }
+    plan = doctor.build_quarantine_routing(
+        "orders", rules, source_table="bronze", table_properties=table_props
     )
-    try:
-        data = [(1, 100), (2, None), (3, -10), (None, 50)]
-        df = spark.createDataFrame(data, ["id", "amount"])
+    code = doctor.generate_pipeline_code(plan, flavor="dlt")
 
-        doctor = ExpectationDoctor()
-        rules = [
-            ExpectationRule("valid_id", "id IS NOT NULL"),
-            ExpectationRule("valid_amount", "amount > 0"),
-        ]
-        plan = doctor.build_quarantine_routing("test_table", rules)
+    assert '"delta.deletedFileRetentionDuration": "interval 30 days"' in code
+    assert '"delta.enableChangeDataFeed": "true"' in code
+    assert '"delta.logRetentionDuration": "interval 60 days"' in code
+    assert "custom_team" not in code
 
-        clean_df = df.filter(plan.valid_filter_sql)
-        quarantine_df = df.filter(plan.invalid_filter_sql)
 
-        total_rows = df.count()
-        clean_rows = clean_df.count()
-        quarantine_rows = quarantine_df.count()
+def test_unified_generator_dp_uses_temporary_view_and_dlt_uses_view() -> None:
+    """Lakeflow (dp) must use @dp.temporary_view, whereas DLT must use @dlt.view."""
+    doctor = ExpectationDoctor()
+    rules = [ExpectationRule("valid_id", "id IS NOT NULL")]
+    plan = doctor.build_quarantine_routing("orders", rules)
 
-        assert clean_rows + quarantine_rows == total_rows
-        assert clean_rows == 1  # only (1, 100)
-        assert quarantine_rows == 3
-    finally:
-        spark.stop()
+    dp_code = doctor.generate_pipeline_code(plan, source_table="bronze", flavor="dp")
+    assert '@dp.temporary_view(name="orders_staged")' in dp_code
+    assert "@dp.view" not in dp_code
+
+    dlt_code = doctor.generate_pipeline_code(plan, source_table="bronze", flavor="dlt")
+    assert '@dlt.view(name="orders_staged")' in dlt_code
+
+
+@pytest.mark.integration
+def test_pyspark_integration_quarantine_partition(spark: Any) -> None:
+    """Verify NULL-safe partition property using the shared SparkSession."""
+    data = [(1, 100), (2, None), (3, -10), (None, 50)]
+    df = spark.createDataFrame(data, ["id", "amount"])
+
+    doctor = ExpectationDoctor()
+    rules = [
+        ExpectationRule("valid_id", "id IS NOT NULL"),
+        ExpectationRule("valid_amount", "amount > 0"),
+    ]
+    plan = doctor.build_quarantine_routing("test_table", rules)
+
+    clean_df = df.filter(plan.valid_filter_sql)
+    quarantine_df = df.filter(plan.invalid_filter_sql)
+
+    total_rows = df.count()
+    clean_rows = clean_df.count()
+    quarantine_rows = quarantine_df.count()
+
+    assert clean_rows + quarantine_rows == total_rows
+    assert clean_rows == 1  # only (1, 100)
+    assert quarantine_rows == 3

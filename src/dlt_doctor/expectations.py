@@ -10,6 +10,30 @@ import sqlglot
 
 ALLOWED_ACTIONS = {"quarantine", "drop", "fail", "warn"}
 
+RETENTION_PROPERTY_KEYS = {
+    "delta.deletedFileRetentionDuration",
+    "delta.logRetentionDuration",
+    "delta.enableChangeDataFeed",
+    "delta.autoOptimize.optimizeWrite",
+    "delta.autoOptimize.autoCompact",
+    "delta.dataSkippingNumIndexedCols",
+}
+
+
+def filter_retention_table_properties(props: dict[str, Any]) -> dict[str, str]:
+    """Filter table properties to retain retention and lifecycle properties for quarantine table."""
+    result: dict[str, str] = {}
+    for k, v in props.items():
+        k_str = str(k)
+        k_lower = k_str.lower()
+        if (
+            k_str in RETENTION_PROPERTY_KEYS
+            or "retention" in k_lower
+            or "changedatafeed" in k_lower
+        ):
+            result[k_str] = str(v)
+    return result
+
 
 def _safe_identifier(name: str) -> str:
     """Convert dotted or special character table names into valid Python identifiers."""
@@ -22,6 +46,8 @@ def _safe_identifier(name: str) -> str:
 def _escape_table_name(table_name: str) -> str:
     """Safely escape catalog, schema, and table components with backticks for Unity Catalog."""
     parts = table_name.strip().split(".")
+    if len(parts) == 1 and parts[0].isidentifier():
+        return parts[0]
     escaped = [f"`{p.strip('`')}`" for p in parts]
     return ".".join(escaped)
 
@@ -72,6 +98,7 @@ class QuarantineRoutingPlan:
     failed_rules_expr_sql: str = "array()"
     rules: list[ExpectationRule] = field(default_factory=list)
     source_table: str | None = None
+    table_properties: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +109,7 @@ class QuarantineRoutingPlan:
             "failed_rules_expr_sql": self.failed_rules_expr_sql,
             "rules": [r.to_dict() for r in self.rules],
             "source_table": self.source_table,
+            "table_properties": self.table_properties,
         }
 
     def generate_pipeline_code(self, source_table: str | None = None, flavor: str = "dp") -> str:
@@ -89,6 +117,182 @@ class QuarantineRoutingPlan:
         return ExpectationDoctor().generate_pipeline_code(
             self, source_table=source_table, flavor=flavor
         )
+
+
+def generate_healed_pipeline_nodes(
+    clean_func_name: str,
+    clean_table_name: str,
+    quarantine_table_name: str,
+    source_table_or_view: str,
+    rules: list[ExpectationRule],
+    flavor: str = "dp",
+    is_streaming: bool = True,
+    clean_table_decorator_text: str | None = None,
+    clean_extra_decorators: list[str] | None = None,
+    table_properties: dict[str, Any] | None = None,
+    quarantine_func_name: str | None = None,
+    staging_func_name: str | None = None,
+    staging_view_name: str | None = None,
+    clean_comment: str = "Clean records passing all expectation contracts.",
+    quarantine_comment: str = "Quarantined records failing business expectations for triage.",
+) -> tuple[str, str, str]:
+    """Generate (staged_func_code, clean_func_code, quarantine_func_code) code blocks.
+
+    Shared by both heal.py and ExpectationDoctor.generate_pipeline_code to ensure uniform
+    pipeline contracts, event-log metric retention, and quarantine table properties.
+    """
+    pkg = "dp" if flavor == "dp" else "dlt"
+    escaped_src = _escape_table_name(source_table_or_view)
+
+    staging_name = staging_view_name or f"{clean_table_name.split('.')[-1]}_staged"
+    escaped_staged = _escape_table_name(staging_name)
+    staging_func = staging_func_name or f"{clean_func_name}_staged"
+
+    # View decorator: dp uses @dp.temporary_view, dlt uses @dlt.view
+    if flavor == "dp":
+        view_dec = f'@dp.temporary_view(name="{staging_name}")'
+    else:
+        view_dec = f'@dlt.view(name="{staging_name}")'
+
+    # Filter rules by action
+    quarantine_rules = [r for r in rules if r.action_on_failure in {"quarantine", "drop"}]
+    warn_rules = [r for r in rules if r.action_on_failure == "warn"]
+    fail_rules = [r for r in rules if r.action_on_failure == "fail"]
+
+    # Retain metrics in event log: keep retain-only @expect_all on staged view
+    if quarantine_rules:
+        entries: list[str] = []
+        for r in quarantine_rules:
+            r_esc = r.rule_name.replace('"', '\\"')
+            c_esc = r.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
+            entries.append(f'        "{r_esc}": "{c_esc}",')
+        dict_body = "{\n" + "\n".join(entries) + "\n    }"
+        staged_decs = f"@{pkg}.expect_all({dict_body})\n{view_dec}"
+    else:
+        staged_decs = view_dec
+
+    # Readers
+    if flavor == "dp":
+        read_src_call = (
+            f'spark.readStream.table("{escaped_src}")'
+            if is_streaming
+            else f'spark.read.table("{escaped_src}")'
+        )
+        read_staged_call = (
+            f'spark.readStream.table("{escaped_staged}")'
+            if is_streaming
+            else f'spark.read.table("{escaped_staged}")'
+        )
+    else:
+        read_src_call = (
+            f'dlt.read_stream("{escaped_src}")' if is_streaming else f'dlt.read("{escaped_src}")'
+        )
+        read_staged_call = (
+            f'dlt.read_stream("{escaped_staged}")'
+            if is_streaming
+            else f'dlt.read("{escaped_staged}")'
+        )
+
+    # Staging select expressions
+    failed_items: list[str] = []
+    for r in quarantine_rules:
+        cond_escaped = r.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
+        r_escaped = r.rule_name.replace("\\", "\\\\").replace('"', '\\"')
+        failed_items.append(
+            f'                F.when(~F.expr("coalesce(({cond_escaped}), false)"), F.lit("{r_escaped}")),'
+        )
+
+    if failed_items:
+        failed_rules_block = "\n".join(failed_items)
+        failed_rules_expr = (
+            f"F.array_compact(\n"
+            f"                F.array(\n"
+            f"{failed_rules_block}\n"
+            f"                )\n"
+            f'            ).alias("_failed_rules")'
+        )
+    else:
+        failed_rules_expr = 'F.array_compact(F.array()).alias("_failed_rules")'
+
+    staged_func_code = (
+        f"{staged_decs}\n"
+        f"def {staging_func}():\n"
+        f"    return (\n"
+        f"        {read_src_call}\n"
+        f"        .select(\n"
+        f'            "*",\n'
+        f"            {failed_rules_expr},\n"
+        f'            F.current_timestamp().alias("_quarantined_at"),\n'
+        f"        )\n"
+        f"    )"
+    )
+
+    # Clean table decorators
+    clean_decs: list[str] = []
+    if clean_table_decorator_text:
+        clean_decs.append(clean_table_decorator_text)
+    else:
+        clean_decs.append(
+            f'@{pkg}.table(\n    name="{clean_table_name}",\n    comment="{clean_comment}",\n)'
+        )
+
+    for wr in warn_rules:
+        wr_esc = wr.rule_name.replace('"', '\\"')
+        wc_esc = wr.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
+        clean_decs.append(f'@{pkg}.expect("{wr_esc}", "{wc_esc}")')
+
+    for fr in fail_rules:
+        fr_esc = fr.rule_name.replace('"', '\\"')
+        fc_esc = fr.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
+        clean_decs.append(f'@{pkg}.expect_or_fail("{fr_esc}", "{fc_esc}")')
+
+    if clean_extra_decorators:
+        clean_decs.extend(clean_extra_decorators)
+
+    clean_decs_str = "\n".join(clean_decs)
+
+    clean_func_code = (
+        f"{clean_decs_str}\n"
+        f"def {clean_func_name}():\n"
+        f"    return (\n"
+        f"        {read_staged_call}\n"
+        f'        .filter(F.size(F.col("_failed_rules")) == 0)\n'
+        f'        .drop("_failed_rules", "_quarantined_at")\n'
+        f"    )"
+    )
+
+    # Quarantine table
+    quarantine_func = quarantine_func_name or f"{clean_func_name}_quarantine"
+    retention_props = filter_retention_table_properties(table_properties or {})
+
+    if retention_props:
+        props_lines = [f'        "{k}": "{v}",' for k, v in sorted(retention_props.items())]
+        props_dict_str = "{\n" + "\n".join(props_lines) + "\n    }"
+        quarantine_dec = (
+            f"@{pkg}.table(\n"
+            f'    name="{quarantine_table_name}",\n'
+            f'    comment="{quarantine_comment}",\n'
+            f"    table_properties={props_dict_str},\n"
+            f")"
+        )
+    else:
+        quarantine_dec = (
+            f"@{pkg}.table(\n"
+            f'    name="{quarantine_table_name}",\n'
+            f'    comment="{quarantine_comment}",\n'
+            f")"
+        )
+
+    quarantine_func_code = (
+        f"{quarantine_dec}\n"
+        f"def {quarantine_func}():\n"
+        f"    return (\n"
+        f"        {read_staged_call}\n"
+        f'        .filter(F.size(F.col("_failed_rules")) > 0)\n'
+        f"    )"
+    )
+
+    return (staged_func_code, clean_func_code, quarantine_func_code)
 
 
 class ExpectationDoctor:
@@ -103,6 +307,7 @@ class ExpectationDoctor:
         rules: list[ExpectationRule],
         source_table: str | None = None,
         quarantine_table: str | None = None,
+        table_properties: dict[str, Any] | None = None,
     ) -> QuarantineRoutingPlan:
         """Construct NULL-safe dual-routing filters separating clean data from quarantined records.
 
@@ -125,6 +330,7 @@ class ExpectationDoctor:
                 failed_rules_expr_sql="array()",
                 rules=rules,
                 source_table=source_table,
+                table_properties=table_properties or {},
             )
 
         # All quarantine rules must pass for clean stream, wrapped in coalesce((<cond>), false) for NULL safety
@@ -152,6 +358,7 @@ class ExpectationDoctor:
             failed_rules_expr_sql=failed_rules_expr,
             rules=rules,
             source_table=source_table,
+            table_properties=table_properties or {},
         )
 
     def generate_pipeline_code(
@@ -176,68 +383,42 @@ class ExpectationDoctor:
             )
         clean_func = _safe_identifier(routing_plan.target_clean_table)
         quarantine_func = _safe_identifier(routing_plan.target_quarantine_table)
-        staging_view_name = f"{routing_plan.target_clean_table}_staged"
+        leaf_clean = routing_plan.target_clean_table.split(".")[-1]
+        staging_view_name = f"{leaf_clean}_staged"
         staging_func = f"{clean_func}_staged"
 
-        escaped_src = _escape_table_name(resolved_source)
-        escaped_staging = _escape_table_name(staging_view_name)
+        staged_code, clean_code, quarantine_code = generate_healed_pipeline_nodes(
+            clean_func_name=clean_func,
+            clean_table_name=routing_plan.target_clean_table,
+            quarantine_table_name=routing_plan.target_quarantine_table,
+            source_table_or_view=resolved_source,
+            rules=routing_plan.rules,
+            flavor=flavor,
+            is_streaming=True,
+            table_properties=routing_plan.table_properties,
+            quarantine_func_name=quarantine_func,
+            staging_func_name=staging_func,
+            staging_view_name=staging_view_name,
+        )
 
         if flavor == "dp":
             import_line = (
                 "from pyspark import pipelines as dp\nfrom pyspark.sql import functions as F"
             )
-            pkg = "dp"
-            read_src = f"spark.readStream.table('{escaped_src}')"
-            read_staging = f"spark.readStream.table('{escaped_staging}')"
         elif flavor == "dlt":
             import_line = "import dlt\nfrom pyspark.sql import functions as F"
-            pkg = "dlt"
-            read_src = f"dlt.read_stream('{escaped_src}')"
-            read_staging = f"dlt.read_stream('{escaped_staging}')"
         else:
             raise ValueError(f"Unknown pipeline flavor '{flavor}'. Choose 'dp' or 'dlt'.")
 
-        escaped_expr = routing_plan.failed_rules_expr_sql.replace("\\", "\\\\").replace('"', '\\"')
-
-        code_lines = [
-            "# Auto-generated single-pass validation and quarantine pipeline by dlt-doctor",
-            import_line,
-            "",
-            f"@{pkg}.view(",
-            f"    name='{staging_view_name}',",
-            "    comment='Staging stream with expectation contract evaluation.'",
-            ")",
-            f"def {staging_func}():",
-            "    return (",
-            f"        {read_src}",
-            f'        .withColumn("_failed_rules", F.expr("{escaped_expr}"))',
-            '        .withColumn("_quarantined_at", F.current_timestamp())',
-            "    )",
-            "",
-            f"# Clean target table: {routing_plan.target_clean_table}",
-            f"@{pkg}.table(",
-            f"    name='{routing_plan.target_clean_table}',",
-            "    comment='Clean records passing all expectation contracts.'",
-            ")",
-            f"def {clean_func}():",
-            "    return (",
-            f"        {read_staging}",
-            '        .filter(F.size(F.col("_failed_rules")) == 0)',
-            '        .drop("_failed_rules", "_quarantined_at")',
-            "    )",
-            "",
-            f"# Dead-letter quarantine table: {routing_plan.target_quarantine_table}",
-            f"@{pkg}.table(",
-            f"    name='{routing_plan.target_quarantine_table}',",
-            "    comment='Quarantined records failing business expectations for triage.'",
-            ")",
-            f"def {quarantine_func}():",
-            "    return (",
-            f"        {read_staging}",
-            '        .filter(F.size(F.col("_failed_rules")) > 0)',
-            "    )",
-        ]
-        return "\n".join(code_lines)
+        return (
+            "# Auto-generated single-pass validation and quarantine pipeline by dlt-doctor\n"
+            f"{import_line}\n\n"
+            f"{staged_code}\n\n"
+            f"# Clean target table: {routing_plan.target_clean_table}\n"
+            f"{clean_code}\n\n"
+            f"# Dead-letter quarantine table: {routing_plan.target_quarantine_table}\n"
+            f"{quarantine_code}\n"
+        )
 
     def generate_dlt_decorator_code(
         self,

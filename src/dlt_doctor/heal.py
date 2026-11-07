@@ -11,7 +11,10 @@ from pathlib import Path
 import sqlglot
 from sqlglot import expressions as exp
 
-from dlt_doctor.expectations import ExpectationRule
+from dlt_doctor.expectations import (
+    ExpectationRule,
+    generate_healed_pipeline_nodes,
+)
 
 
 @dataclass
@@ -418,87 +421,34 @@ def auto_heal_source(
         else:
             raw_dec = f'@dlt.view(name="{raw_view_name}")'
 
-        # Build staged view
-        if flavor == "dp":
-            staged_dec = f'@dp.temporary_view(name="{staged_view_name}")'
-            read_raw_expr = (
-                f'spark.readStream.table("{raw_view_name}")'
-                if is_streaming
-                else f'spark.read.table("{raw_view_name}")'
-            )
-            read_staged_expr = (
-                f'spark.readStream.table("{staged_view_name}")'
-                if is_streaming
-                else f'spark.read.table("{staged_view_name}")'
-            )
-        else:
-            staged_dec = f'@dlt.view(name="{staged_view_name}")'
-            read_raw_expr = (
-                f'dlt.read_stream("{raw_view_name}")'
-                if is_streaming
-                else f'dlt.read("{raw_view_name}")'
-            )
-            read_staged_expr = (
-                f'dlt.read_stream("{staged_view_name}")'
-                if is_streaming
-                else f'dlt.read("{staged_view_name}")'
-            )
+        # Extract table_properties from table_dec if present
+        extracted_table_props: dict[str, str] = {}
+        if isinstance(table_dec, ast.Call):
+            for kw in table_dec.keywords:
+                if kw.arg == "table_properties" and isinstance(kw.value, ast.Dict):
+                    for k, v in zip(kw.value.keys, kw.value.values, strict=False):
+                        if (
+                            isinstance(k, ast.Constant)
+                            and isinstance(v, ast.Constant)
+                            and isinstance(k.value, str)
+                            and isinstance(v.value, str)
+                        ):
+                            extracted_table_props[k.value] = v.value
 
-        # Build condition expressions for staged view
-        failed_items: list[str] = []
-        for r in rules:
-            cond_escaped = r.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
-            r_escaped = r.rule_name.replace("\\", "\\\\").replace('"', '\\"')
-            failed_items.append(
-                f'                F.when(~F.expr("coalesce(({cond_escaped}), false)"), F.lit("{r_escaped}")),'
-            )
-        failed_rules_block = "\n".join(failed_items)
-
-        staged_func_code = (
-            f"{staged_dec}\n"
-            f"def {func.name}_staged():\n"
-            f"    return (\n"
-            f"        {read_raw_expr}\n"
-            f"        .select(\n"
-            f'            "*",\n'
-            f"            F.array_compact(\n"
-            f"                F.array(\n"
-            f"{failed_rules_block}\n"
-            f"                )\n"
-            f'            ).alias("_failed_rules"),\n'
-            f'            F.current_timestamp().alias("_quarantined_at"),\n'
-            f"        )\n"
-            f"    )\n"
-        )
-
-        # Build clean table
-        clean_decs: list[str] = [table_dec_text]
-        clean_decs.extend(expect_decs_text_list)
-        clean_decs_str = "\n".join(clean_decs)
-
-        clean_func_code = (
-            f"{clean_decs_str}\n"
-            f"def {func.name}():\n"
-            f"    return (\n"
-            f"        {read_staged_expr}\n"
-            f'        .filter(F.size(F.col("_failed_rules")) == 0)\n'
-            f'        .drop("_failed_rules", "_quarantined_at")\n'
-            f"    )\n"
-        )
-
-        # Build quarantine table
-        if flavor == "dp":
-            quarantine_dec = f'@dp.table(name="{quarantine_table_name}")'
-        else:
-            quarantine_dec = f'@dlt.table(name="{quarantine_table_name}")'
-
-        quarantine_func_code = (
-            f"{quarantine_dec}\n"
-            f"def {func.name}_quarantine():\n"
-            f"    return (\n"
-            f"        {read_staged_expr}\n"
-            f'        .filter(F.size(F.col("_failed_rules")) > 0)\n'
-            f"    )\n"
+        staged_func_code, clean_func_code, quarantine_func_code = generate_healed_pipeline_nodes(
+            clean_func_name=func.name,
+            clean_table_name=table_name,
+            quarantine_table_name=quarantine_table_name,
+            source_table_or_view=raw_view_name,
+            rules=rules,
+            flavor=flavor,
+            is_streaming=is_streaming,
+            clean_table_decorator_text=table_dec_text,
+            clean_extra_decorators=expect_decs_text_list,
+            table_properties=extracted_table_props,
+            quarantine_func_name=f"{func.name}_quarantine",
+            staging_func_name=f"{func.name}_staged",
+            staging_view_name=staged_view_name,
         )
 
         # Combine all parts
