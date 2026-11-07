@@ -296,6 +296,11 @@ def generate_healed_pipeline_nodes(
     if expect_all_dec:
         quar_decs.append(expect_all_dec)
 
+    for wr in warn_rules:
+        wr_esc = wr.rule_name.replace('"', '\\"')
+        wc_esc = wr.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
+        quar_decs.append(f'@{pkg}.expect("{wr_esc}", "{wc_esc}")')
+
     quarantine_decs_str = "\n".join(quar_decs)
 
     quarantine_func_code = (

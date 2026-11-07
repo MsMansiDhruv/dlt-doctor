@@ -148,6 +148,10 @@ def test_honors_action_on_failure_for_quarantine_routing() -> None:
     assert "qty > 0" not in plan.valid_filter_sql
     assert "warn_rule" not in plan.failed_rules_expr_sql
 
+    code = doctor.generate_pipeline_code(plan, source_table="bronze_orders", flavor="dp")
+    # Warn rule must appear on both clean and quarantine tables
+    assert code.count('@dp.expect("warn_rule", "qty > 0")') == 2
+
 
 def test_escapes_table_names_in_generated_code() -> None:
     """Generated code must escape table names with backticks for Unity Catalog compatibility."""
