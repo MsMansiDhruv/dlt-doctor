@@ -144,7 +144,7 @@ def generate_replay_sql(
     if recency_col:
         clean_recency = _validate_identifier(recency_col)
         matched_clauses.append(
-            f"WHEN MATCHED AND (target.{clean_recency} IS NULL OR source.{clean_recency} >= target.{clean_recency}) THEN UPDATE SET *"
+            f"WHEN MATCHED AND (target.{clean_recency} IS NULL OR source.{clean_recency} >= target.{clean_recency}) THEN UPDATE SET *"  # nosec B608
         )
 
     select_clause = "* EXCEPT (_failed_rules, _quarantined_at)"

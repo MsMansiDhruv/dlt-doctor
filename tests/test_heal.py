@@ -225,6 +225,7 @@ def _execute_healed_pipeline_on_spark(
     source_table: str,
     source_df: Any,
     func_name: str,
+    monkeypatch: pytest.MonkeyPatch,
     table_name: str | None = None,
 ) -> tuple[Any, Any]:
     """Execute generated raw, staged, clean, and quarantine functions against real PySpark DataFrames."""
@@ -233,7 +234,7 @@ def _execute_healed_pipeline_on_spark(
     tbl = table_name or func_name
     tables: dict[str, Any] = {source_table: source_df}
     stub = StubDLT(tables)
-    sys.modules["dlt"] = stub  # type: ignore[assignment]
+    monkeypatch.setitem(sys.modules, "dlt", stub)
 
     env: dict[str, Any] = {"spark": spark, "dlt": stub}
     exec(healed_code, env)  # nosec B102
@@ -262,7 +263,9 @@ def _execute_healed_pipeline_on_spark(
 
 
 @pytest.mark.integration
-def test_auto_heal_clean_and_quarantine_partition_on_nulls(spark: Any) -> None:
+def test_auto_heal_clean_and_quarantine_partition_on_nulls(
+    spark: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Execute healed code on Spark with NULL-heavy data:
     assert clean == original table with drop rule applied, and clean U quarantine == pre-expectation rows.
     """
@@ -285,6 +288,7 @@ def curated_orders():
         source_table="bronze_orders",
         source_df=df_bronze,
         func_name="curated_orders",
+        monkeypatch=monkeypatch,
         table_name="curated_orders",
     )
 
@@ -306,7 +310,9 @@ def curated_orders():
 
 
 @pytest.mark.integration
-def test_pyspark_integration_healed_pipeline_execution(spark: Any) -> None:
+def test_pyspark_integration_healed_pipeline_execution(
+    spark: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Execute healed multi-statement body code on local PySpark session:
     assert clean == original function output with drop rule applied, and clean U quarantine == pre-expectation rows.
     """
@@ -331,6 +337,7 @@ def filtered_orders():
         source_table="raw_orders",
         source_df=df_raw,
         func_name="filtered_orders",
+        monkeypatch=monkeypatch,
         table_name="filtered_orders",
     )
 
@@ -449,7 +456,9 @@ def nondet_tbl():
 
 
 @pytest.mark.integration
-def test_auto_heal_executes_healed_code_on_regex_data(spark: Any) -> None:
+def test_auto_heal_executes_healed_code_on_regex_data(
+    spark: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Execute healed code with regex pattern on Spark: assert clean == original with drop rule."""
     source = r"""import dlt
 
@@ -470,6 +479,7 @@ def addresses():
         source_table="bronze_addresses",
         source_df=df_bronze,
         func_name="addresses",
+        monkeypatch=monkeypatch,
         table_name="addresses",
     )
 

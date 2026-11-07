@@ -8,14 +8,30 @@ from collections.abc import Generator
 
 import pytest
 
-# Ensure Windows Java and Hadoop paths are configured before any PySpark / JVM invocation
+# Ensure Windows Java and Hadoop paths from environment are present in PATH for PySpark / JVM invocation
 if sys.platform == "win32":
-    if not os.environ.get("JAVA_HOME") and os.path.exists(
-        r"C:\PROGRA~2\Android\openjdk\jdk-17.0.14"
-    ):
-        os.environ["JAVA_HOME"] = r"C:\PROGRA~2\Android\openjdk\jdk-17.0.14"
-    if not os.environ.get("HADOOP_HOME") and os.path.exists(r"C:\tmp\hadoop"):
-        os.environ["HADOOP_HOME"] = r"C:\tmp\hadoop"
+    if not os.environ.get("JAVA_HOME") or not os.environ.get("HADOOP_HOME"):
+        try:
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                if not os.environ.get("JAVA_HOME"):
+                    try:
+                        val, _ = winreg.QueryValueEx(key, "JAVA_HOME")
+                        if val:
+                            os.environ["JAVA_HOME"] = str(val)
+                    except OSError:
+                        pass
+                if not os.environ.get("HADOOP_HOME"):
+                    try:
+                        val, _ = winreg.QueryValueEx(key, "HADOOP_HOME")
+                        if val:
+                            os.environ["HADOOP_HOME"] = str(val)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
     if os.environ.get("JAVA_HOME"):
         java_bin = os.path.join(os.environ["JAVA_HOME"], "bin")
         if java_bin not in os.environ.get("PATH", ""):
@@ -32,14 +48,17 @@ def spark() -> Generator:
     require_spark = os.environ.get("REQUIRE_SPARK") == "1"
 
     try:
+        from delta import configure_spark_with_delta_pip
         from pyspark.sql import SparkSession
     except ImportError as exc:
         if require_spark:
-            pytest.fail(f"PySpark is required (REQUIRE_SPARK=1) but not installed: {exc}")
-        pytest.skip(f"PySpark not installed: {exc}")
+            pytest.fail(
+                f"PySpark or Delta Lake is required (REQUIRE_SPARK=1) but not installed: {exc}"
+            )
+        pytest.skip(f"PySpark or Delta Lake not installed: {exc}")
 
     try:
-        session = (
+        builder = (
             SparkSession.builder.master("local[1]")
             .appName("dlt-doctor-tests")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
@@ -49,8 +68,8 @@ def spark() -> Generator:
             .config("spark.ui.enabled", "false")
             .config("spark.sql.shuffle.partitions", "1")
             .config("spark.default.parallelism", "1")
-            .getOrCreate()
         )
+        session = configure_spark_with_delta_pip(builder).getOrCreate()
         yield session
         session.stop()
     except Exception as exc:
