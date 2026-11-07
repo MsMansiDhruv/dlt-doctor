@@ -167,7 +167,7 @@ def test_auto_cdc_creates_streaming_table() -> None:
 
 
 def test_cdc_sequence_col_defaults_to_commit_version_for_cdf() -> None:
-    """When source_is_cdf=True, sequence_col must default to _commit_version."""
+    """When source_is_cdf=True and sequence_col is None, sequence_col must default to _commit_version."""
     doctor = CdcDoctor()
     template = doctor.generate_cdc_templates(
         target_table="silver_orders",
@@ -179,6 +179,21 @@ def test_cdc_sequence_col_defaults_to_commit_version_for_cdf() -> None:
     assert "_commit_version" in template.microbatch_dedup_code
     assert "_cdc_seq_id" not in template.microbatch_dedup_code
     assert "_commit_version" in template.auto_cdc_code
+
+
+def test_cdc_honors_explicit_sequence_col_even_if_cdf() -> None:
+    """Explicit sequence_col must be honored even if source_is_cdf=True."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        source_stream="bronze_cdc",
+        sequence_col="_cdc_seq_id",
+        source_is_cdf=True,
+        include_auto_cdc=True,
+    )
+    assert "_cdc_seq_id" in template.microbatch_dedup_code
+    assert "_cdc_seq_id" in template.auto_cdc_code
 
 
 def test_source_is_cdf_false_omits_change_type() -> None:
@@ -351,6 +366,19 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
         }
         assert scd1_rows_after_late == scd1_rows
 
+        # Late delete on id=1 at 08:00:00 (v=98) -> must be ignored by recency guard, id=1 must NOT be deleted
+        late_delete_data = [(1, 100.0, "2026-01-01 08:00:00", "delete", 98, 700)]
+        late_delete_df = spark.createDataFrame(late_delete_data, schema=cdf_schema)
+        merge_fn(late_delete_df, 3)
+
+        scd1_rows_after_late_del = {
+            (r.id, r.amt, r.updated_at)
+            for r in spark.sql(
+                "SELECT id, amt, updated_at FROM default.test_cdc_scd1_orders"
+            ).collect()
+        }
+        assert scd1_rows_after_late_del == scd1_rows
+
         # 2. SCD2 Delta Execution: in-order update, late update, brand new key, and delete event
         spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd2_customers")
         spark.sql(f"""
@@ -432,6 +460,22 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
         assert len(current_id1_after_late) == 1
         assert current_id1_after_late[0].name == "Alice V2"
 
+        # Equal-timestamp redelivery on id=1 at 12:00:00 (same timestamp as current valid_from)
+        # Must be completely ignored; must NOT insert a duplicate is_current row or modify existing row
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT 1 AS id, 'Alice V2 Redelivered' AS name, '2026-01-01 12:00:00' AS updated_at
+        """)
+        _run_scd2_sql()
+
+        current_id1_after_equal = spark.sql("""
+            SELECT id, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_scd2_customers
+            WHERE id = 1 AND is_current = true
+        """).collect()
+        assert len(current_id1_after_equal) == 1
+        assert current_id1_after_equal[0].name == "Alice V2"
+
         # Insert brand new key: id=2 at 13:00:00
         spark.sql("""
             CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
@@ -496,3 +540,180 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
         spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd2_customers")
         shutil.rmtree(tmp_scd1, ignore_errors=True)
         shutil.rmtree(tmp_scd2, ignore_errors=True)
+
+
+@pytest.mark.integration
+def test_execute_cdc_composite_keys_and_partition_on_pyspark(spark: Any) -> None:
+    """Execute SCD1 and SCD2 MERGE on Spark with composite primary keys and partition_col."""
+    import shutil
+    import tempfile
+
+    doctor = CdcDoctor()
+    tmp_dir1 = tempfile.mkdtemp().replace("\\", "/")
+    tmp_dir2 = tempfile.mkdtemp().replace("\\", "/")
+
+    try:
+        # 1. Composite Keys + Partition on SCD1
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_comp_scd1")
+        spark.sql(f"""
+            CREATE TABLE default.test_cdc_comp_scd1 (
+                tenant_id INT,
+                order_id INT,
+                region STRING,
+                amt DOUBLE,
+                updated_at STRING
+            ) USING DELTA PARTITIONED BY (region) LOCATION '{tmp_dir1}'
+        """)
+        spark.sql("""
+            INSERT INTO default.test_cdc_comp_scd1 VALUES
+            (1, 101, 'US', 50.0, '2026-01-01 10:00:00'),
+            (1, 102, 'EU', 75.0, '2026-01-01 10:00:00')
+        """)
+
+        tmpl_scd1 = doctor.generate_cdc_templates(
+            target_table="default.test_cdc_comp_scd1",
+            primary_keys=["tenant_id", "order_id"],
+            partition_col="region",
+            event_time_col="updated_at",
+            source_is_cdf=True,
+        )
+
+        loc: dict[str, Any] = {}
+        exec(tmpl_scd1.microbatch_dedup_code, loc)
+        merge_fn = loc["merge_cdc_microbatch"]
+
+        from pyspark.sql.types import (
+            DoubleType,
+            IntegerType,
+            LongType,
+            StringType,
+            StructField,
+            StructType,
+        )
+
+        cdf_schema = StructType(
+            [
+                StructField("tenant_id", IntegerType(), False),
+                StructField("order_id", IntegerType(), False),
+                StructField("region", StringType(), False),
+                StructField("amt", DoubleType(), True),
+                StructField("updated_at", StringType(), True),
+                StructField("_change_type", StringType(), True),
+                StructField("_commit_version", LongType(), True),
+                StructField("_commit_timestamp", LongType(), True),
+            ]
+        )
+
+        batch_data = [
+            # In-order upsert on (1, 101, 'US')
+            (1, 101, "US", 80.0, "2026-01-01 11:00:00", "update_postimage", 101, 1000),
+            # In-order delete on (1, 102, 'EU')
+            (1, 102, "EU", 75.0, "2026-01-01 11:00:00", "delete", 102, 2000),
+            # Late delete on (1, 101, 'US') at 08:00:00 -> ignored by recency guard
+            (1, 101, "US", 50.0, "2026-01-01 08:00:00", "delete", 99, 500),
+            # Insert on (2, 201, 'US')
+            (2, 201, "US", 120.0, "2026-01-01 11:00:00", "insert", 103, 3000),
+        ]
+        df_batch = spark.createDataFrame(batch_data, schema=cdf_schema)
+        merge_fn(df_batch, 1)
+
+        scd1_rows = {
+            (r.tenant_id, r.order_id, r.region, r.amt, r.updated_at)
+            for r in spark.sql(
+                "SELECT tenant_id, order_id, region, amt, updated_at FROM default.test_cdc_comp_scd1"
+            ).collect()
+        }
+        assert scd1_rows == {
+            (1, 101, "US", 80.0, "2026-01-01 11:00:00"),
+            (2, 201, "US", 120.0, "2026-01-01 11:00:00"),
+        }
+
+        # 2. Composite Keys + Partition on SCD2
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_comp_scd2")
+        spark.sql(f"""
+            CREATE TABLE default.test_cdc_comp_scd2 (
+                tenant_id INT,
+                user_id INT,
+                region STRING,
+                name STRING,
+                is_current BOOLEAN,
+                valid_from STRING,
+                valid_to STRING
+            ) USING DELTA PARTITIONED BY (region) LOCATION '{tmp_dir2}'
+        """)
+        spark.sql("""
+            INSERT INTO default.test_cdc_comp_scd2 VALUES
+            (1, 501, 'US', 'Alpha V1', true, '2026-01-01 10:00:00', NULL)
+        """)
+
+        tmpl_scd2 = doctor.generate_cdc_templates(
+            target_table="default.test_cdc_comp_scd2",
+            primary_keys=["tenant_id", "user_id"],
+            partition_col="region",
+            event_time_col="updated_at",
+            value_cols=["name"],
+            source_is_cdf=True,
+            include_scd2=True,
+        )
+
+        def _run_scd2() -> None:
+            for s in tmpl_scd2.scd2_merge_sql.split(";"):
+                c = s.strip()
+                if c:
+                    spark.sql(c)
+
+        # In-order update on (1, 501, 'US')
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT 1 AS tenant_id, 501 AS user_id, 'US' AS region, 'Alpha V2' AS name, '2026-01-01 12:00:00' AS updated_at
+        """)
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS
+            SELECT CAST(NULL AS INT) AS tenant_id, CAST(NULL AS INT) AS user_id, CAST(NULL AS STRING) AS region, CAST(NULL AS STRING) AS name, CAST(NULL AS STRING) AS updated_at
+            WHERE 1 = 0
+        """)
+        _run_scd2()
+
+        current_rows = spark.sql("""
+            SELECT tenant_id, user_id, region, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_comp_scd2
+            WHERE tenant_id = 1 AND user_id = 501 AND is_current = true
+        """).collect()
+        assert len(current_rows) == 1
+        assert current_rows[0].name == "Alpha V2"
+        assert current_rows[0].valid_from == "2026-01-01 12:00:00"
+
+        closed_rows = spark.sql("""
+            SELECT tenant_id, user_id, region, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_comp_scd2
+            WHERE tenant_id = 1 AND user_id = 501 AND is_current = false
+        """).collect()
+        assert len(closed_rows) == 1
+        assert closed_rows[0].name == "Alpha V1"
+        assert closed_rows[0].valid_to == "2026-01-01 12:00:00"
+
+        # SCD2 Delete on (1, 501, 'US')
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT CAST(NULL AS INT) AS tenant_id, CAST(NULL AS INT) AS user_id, CAST(NULL AS STRING) AS region, CAST(NULL AS STRING) AS name, CAST(NULL AS STRING) AS updated_at
+            WHERE 1 = 0
+        """)
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS
+            SELECT 1 AS tenant_id, 501 AS user_id, 'US' AS region, 'Alpha V2' AS name, '2026-01-01 14:00:00' AS updated_at
+        """)
+        _run_scd2()
+
+        active_count = (
+            spark.sql("""
+            SELECT count(*) as cnt FROM default.test_cdc_comp_scd2 WHERE is_current = true
+        """)
+            .collect()[0]
+            .cnt
+        )
+        assert active_count == 0
+    finally:
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_comp_scd1")
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_comp_scd2")
+        shutil.rmtree(tmp_dir1, ignore_errors=True)
+        shutil.rmtree(tmp_dir2, ignore_errors=True)

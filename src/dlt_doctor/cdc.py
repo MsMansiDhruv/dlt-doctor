@@ -47,12 +47,19 @@ class CdcDoctor:
         include_auto_cdc: bool = False,
         include_scd2: bool = False,
     ) -> CdcMergeTemplate:
-        """Generate deduplication and MERGE patterns to eliminate multiple-match errors."""
+        """Generate deduplication and MERGE patterns to eliminate multiple-match errors.
+
+        Note on SCD Type 2 execution:
+        The generated `merge_cdc_microbatch` Python function is wired for SCD Type 1 upserts and deletes.
+        SCD Type 2 MERGE logic (`scd2_merge_sql`) is provided as standalone SQL statements (a 2-statement
+        MERGE script handling active updates/inserts and delete closure) designed to be executed via
+        `spark.sql(...)` against `source_cdc_batch` and `cdc_deletes_batch`.
+        """
         clean_target = _validate_identifier(target_table)
         clean_keys = [_validate_identifier(k) for k in primary_keys]
         clean_time = _validate_identifier(event_time_col)
-        # Change Data Feed (CDF) emits _commit_version by default; non-CDF streams use custom sequence
-        if sequence_col is None or sequence_col == "_cdc_seq_id":
+        # Change Data Feed (CDF) emits _commit_version by default when sequence_col is None; non-CDF streams default to _cdc_seq_id
+        if sequence_col is None:
             clean_seq = "_commit_version" if source_is_cdf else "_cdc_seq_id"
         else:
             clean_seq = _validate_identifier(sequence_col)
@@ -72,6 +79,8 @@ class CdcDoctor:
         current_target_pk_join = " AND ".join(
             f"current_target.{k} = source.{k}" for k in clean_keys
         )
+        if clean_part:
+            current_target_pk_join += f" AND current_target.{clean_part} = source.{clean_part}"
         del_join = " AND ".join(f"target.{k} = del.{k}" for k in clean_keys)
 
         partition_clause = ""
@@ -151,14 +160,15 @@ class CdcDoctor:
 
         scd2_sql = ""
         if clean_values or include_scd2:
-            insert_cols_list = (
-                clean_keys
-                + [c for c in clean_values if c not in clean_keys]
-                + ["is_current", "valid_from", "valid_to"]
-            )
-            insert_vals_list = [
-                f"staged.{c}" for c in clean_keys + [c for c in clean_values if c not in clean_keys]
-            ] + ["true", f"staged.{clean_time}", "NULL"]
+            base_cols = clean_keys + [c for c in clean_values if c not in clean_keys]
+            if clean_part and clean_part not in base_cols:
+                base_cols.append(clean_part)
+            insert_cols_list = [*base_cols, "is_current", "valid_from", "valid_to"]
+            insert_vals_list = [f"staged.{c}" for c in base_cols] + [
+                "true",
+                f"staged.{clean_time}",
+                "NULL",
+            ]
             insert_cols_str = ", ".join(insert_cols_list)
             insert_vals_str = ", ".join(insert_vals_list)
 
