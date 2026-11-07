@@ -2,90 +2,94 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/benchmarks/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/cli/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
+    </url>
+    <url>
+         <loc>https://msmansidhruv.github.io/dlt-doctor/configuration/</loc>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/github-action/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/interactive/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/limitations/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/story/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/articles/zero_loss_quarantine/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/autoloader/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/catalyst/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/cdc/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/checkpoint/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/cluster/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/compaction/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/connect/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/cost/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/expectations/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/quarantine_governance/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/replay/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/restatement/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/spill/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
     <url>
          <loc>https://msmansidhruv.github.io/dlt-doctor/engines/uc/</loc>
-         <lastmod>2026-11-06</lastmod>
+         <lastmod>2026-11-07</lastmod>
     </url>
 </urlset>
