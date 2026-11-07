@@ -480,3 +480,136 @@ def addresses():
     assert quarantine_ids == {2, 3, 4}
     assert clean_ids.isdisjoint(quarantine_ids)
     assert clean_ids.union(quarantine_ids) == {1, 2, 3, 4, 5}
+
+
+def test_auto_heal_refuses_nested_functions() -> None:
+    """Functions defined inside loops or factory functions must be refused with a clear reason."""
+    source = """import dlt
+
+def pipeline_factory():
+    @dlt.table
+    @dlt.expect_or_drop("v", "x > 0")
+    def inner_tbl():
+        return dlt.read_stream("raw")
+    return inner_tbl
+"""
+    result = auto_heal_source(source)
+    assert result.can_heal is False
+    assert "nested function 'inner_tbl'" in result.reason
+    assert "inside loops, factories, or classes" in result.reason
+
+
+def test_auto_heal_refuses_spread_dict() -> None:
+    """Expectation dictionaries with **spread or non-constant values must be refused."""
+    source = """import dlt
+
+extra = {"v2": "y > 0"}
+
+@dlt.table
+@dlt.expect_all_or_drop({"v1": "x > 0", **extra})
+def tbl():
+    return dlt.read_stream("raw")
+"""
+    result = auto_heal_source(source)
+    assert result.can_heal is False
+    assert "**spread" in result.reason or "dynamic" in result.reason
+
+
+def test_auto_heal_refuses_nondet_sql() -> None:
+    """Rules with non-deterministic SQL functions like current_timestamp() must be refused."""
+    source = """import dlt
+
+@dlt.table
+@dlt.expect_or_drop("recent", "ts > current_timestamp()")
+def tbl():
+    return dlt.read_stream("raw")
+"""
+    result = auto_heal_source(source)
+    assert result.can_heal is False
+    assert "current_timestamp" in result.reason
+
+
+def test_auto_heal_refuses_stateful_streaming_calls() -> None:
+    """DataFrame stateful operations like groupBy, dropDuplicates, withWatermark, or stream joins must be refused."""
+    for method in [
+        "groupBy('cat')",
+        "dropDuplicates()",
+        "withWatermark('ts', '1 hour')",
+        "join(other)",
+    ]:
+        source = f"""import dlt
+
+@dlt.table
+@dlt.expect_or_drop("v", "x > 0")
+def tbl():
+    df = dlt.read_stream("raw")
+    return df.{method}
+"""
+        result = auto_heal_source(source)
+        assert result.can_heal is False
+        assert "stateful streaming operation" in result.reason
+
+
+def test_auto_heal_catches_invalid_rule_syntax() -> None:
+    """Invalid SQL in expectation condition must return can_heal=False without unhandled exceptions."""
+    source = """import dlt
+
+@dlt.table
+@dlt.expect_or_drop("broken", "amount >>>> 0 ???")
+def tbl():
+    return dlt.read_stream("raw")
+"""
+    result = auto_heal_source(source)
+    assert result.can_heal is False
+    assert "invalid expectation rule" in result.reason
+
+
+def test_auto_heal_refuses_name_collision() -> None:
+    """Refuse auto-healing if generated names collide with existing top-level definitions."""
+    source = """import dlt
+
+def tbl_staged():
+    return "existing"
+
+@dlt.table
+@dlt.expect_or_drop("v", "x > 0")
+def tbl():
+    return dlt.read_stream("raw")
+"""
+    result = auto_heal_source(source)
+    assert result.can_heal is False
+    assert "collides with an existing definition" in result.reason
+
+
+def test_auto_heal_supports_positional_table_name() -> None:
+    """Positional table decorator @dlt.table('my_table') must be honored."""
+    source = """import dlt
+
+@dlt.table("my_table")
+@dlt.expect_or_drop("v", "x > 0")
+def my_func():
+    return dlt.read_stream("raw")
+"""
+    result = auto_heal_source(source)
+    assert result.can_heal is True
+    assert 'name="my_table_raw"' in result.healed_code
+    assert 'name="my_table_staged"' in result.healed_code
+    assert 'name="my_table_quarantine"' in result.healed_code
+
+
+def test_auto_heal_uses_leaf_names_for_temporary_views() -> None:
+    """Qualified table names like main.silver.orders must use leaf names for session views."""
+    source = """import dlt
+
+@dlt.table(name="main.silver.orders")
+@dlt.expect_or_drop("valid_amt", "amount > 0")
+def orders():
+    return dlt.read_stream("bronze")
+"""
+    result = auto_heal_source(source)
+    assert result.can_heal is True
+    assert 'name="orders_raw"' in result.healed_code
+    assert 'name="orders_staged"' in result.healed_code
+    assert 'name="main.silver.orders_quarantine"' in result.healed_code
+    assert 'dlt.read_stream("orders_raw")' in result.healed_code
+    assert 'dlt.read_stream("orders_staged")' in result.healed_code

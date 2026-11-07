@@ -8,6 +8,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import sqlglot
+from sqlglot import expressions as exp
+
 from dlt_doctor.expectations import ExpectationRule
 
 
@@ -34,9 +37,31 @@ NONDETERMINISTIC_FUNCS = {
     "now",
     "unix_timestamp",
 }
+STATEFUL_METHODS = {
+    "groupby",
+    "group_by",
+    "agg",
+    "aggregate",
+    "dropduplicates",
+    "drop_duplicates",
+    "withwatermark",
+    "with_watermark",
+    "join",
+}
+SQL_NONDETERMINISTIC_FUNCS = {
+    "current_timestamp",
+    "current_date",
+    "now",
+    "rand",
+    "randn",
+    "uuid",
+    "monotonically_increasing_id",
+    "unix_timestamp",
+    "current_timezone",
+}
 
 
-def _has_nondeterministic_calls(func_node: ast.FunctionDef) -> bool:
+def _has_stateful_or_nondet_calls(func_node: ast.FunctionDef) -> tuple[bool, str]:
     for node in ast.walk(func_node):
         if isinstance(node, ast.Call):
             func_name = ""
@@ -44,9 +69,31 @@ def _has_nondeterministic_calls(func_node: ast.FunctionDef) -> bool:
                 func_name = node.func.id
             elif isinstance(node.func, ast.Attribute):
                 func_name = node.func.attr
-            if func_name.lower() in NONDETERMINISTIC_FUNCS:
-                return True
-    return False
+            name_lower = func_name.lower()
+            if name_lower in NONDETERMINISTIC_FUNCS:
+                return True, f"non-deterministic call '{func_name}'"
+            if name_lower in STATEFUL_METHODS:
+                return True, f"stateful streaming operation '{func_name}'"
+    return False, ""
+
+
+def _has_nondeterministic_sql(condition_sql: str) -> str | None:
+    try:
+        parsed = sqlglot.parse(condition_sql, read="spark")
+    except Exception:
+        return None
+    for stmt in parsed:
+        if stmt is None:
+            continue
+        for node in stmt.walk():
+            name = ""
+            if isinstance(node, exp.Func):
+                name = node.sql_name().lower()
+            elif isinstance(node, exp.Anonymous):
+                name = node.this.lower()
+            if name in SQL_NONDETERMINISTIC_FUNCS:
+                return name
+    return None
 
 
 def auto_heal_source(
@@ -72,6 +119,37 @@ def auto_heal_source(
     flavor = (
         "dp" if ("pyspark.pipelines" in source_code or "pipelines as dp" in source_code) else "dlt"
     )
+
+    # Check for any nested function definitions with expect_or_drop
+    all_funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    top_level_funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    nested_drop_funcs = [
+        f
+        for f in all_funcs
+        if f not in top_level_funcs and any(_is_drop_decorator(dec) for dec in f.decorator_list)
+    ]
+    if nested_drop_funcs:
+        first_nested = nested_drop_funcs[0]
+        return HealResult(
+            original_code=source_code,
+            healed_code=source_code,
+            diff="",
+            can_heal=False,
+            reason=(
+                f"Refusing to auto-heal nested function '{first_nested.name}': functions defined "
+                "inside loops, factories, or classes cannot be safely rewritten at module scope."
+            ),
+        )
+
+    # Collect existing top-level defined names to guard against collisions
+    existing_top_level_names: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.ClassDef)):
+            existing_top_level_names.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            for tgt in stmt.targets:
+                if isinstance(tgt, ast.Name):
+                    existing_top_level_names.add(tgt.id)
 
     # Find functions with expect_or_drop
     target_funcs: list[ast.FunctionDef] = []
@@ -110,7 +188,8 @@ def auto_heal_source(
                 ),
             )
 
-        if _has_nondeterministic_calls(func):
+        is_bad, bad_reason = _has_stateful_or_nondet_calls(func)
+        if is_bad:
             return HealResult(
                 original_code=source_code,
                 healed_code=source_code,
@@ -118,17 +197,45 @@ def auto_heal_source(
                 can_heal=False,
                 reason=(
                     f"Refusing to auto-heal function '{func.name}': function body contains "
-                    "non-deterministic or stateful calls that would recompute different values across stages."
+                    f"{bad_reason} that would recompute different values across stages."
                 ),
             )
 
-        # Extract table decorator
+        # Extract table decorator and table name (support both positional and keyword 'name')
         table_dec = next((d for d in func.decorator_list if _is_table_decorator(d)), None)
         table_name = func.name
         if table_dec and isinstance(table_dec, ast.Call):
+            if table_dec.args:
+                if isinstance(table_dec.args[0], ast.Constant) and isinstance(
+                    table_dec.args[0].value, str
+                ):
+                    table_name = str(table_dec.args[0].value)
+                else:
+                    return HealResult(
+                        original_code=source_code,
+                        healed_code=source_code,
+                        diff="",
+                        can_heal=False,
+                        reason=(
+                            f"Cannot auto-heal function '{func.name}': dynamic or non-constant "
+                            "table name decorator argument cannot be safely resolved statically."
+                        ),
+                    )
             for kw in table_dec.keywords:
-                if kw.arg == "name" and isinstance(kw.value, ast.Constant):
-                    table_name = str(kw.value.value)
+                if kw.arg == "name":
+                    if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        table_name = str(kw.value.value)
+                    else:
+                        return HealResult(
+                            original_code=source_code,
+                            healed_code=source_code,
+                            diff="",
+                            can_heal=False,
+                            reason=(
+                                f"Cannot auto-heal function '{func.name}': dynamic or non-constant "
+                                "table name keyword argument cannot be safely resolved statically."
+                            ),
+                        )
 
         # Extract expectation rules from drop decorators
         rules: list[ExpectationRule] = []
@@ -137,20 +244,77 @@ def auto_heal_source(
                 if (
                     len(dec.args) >= 2
                     and isinstance(dec.args[0], ast.Constant)
+                    and isinstance(dec.args[0].value, str)
                     and isinstance(dec.args[1], ast.Constant)
+                    and isinstance(dec.args[1].value, str)
                 ):
                     rule_name = str(dec.args[0].value)
                     condition_sql = str(dec.args[1].value)
-                    rules.append(ExpectationRule(rule_name=rule_name, condition_sql=condition_sql))
+                    try:
+                        rule = ExpectationRule(rule_name=rule_name, condition_sql=condition_sql)
+                    except ValueError as exc:
+                        return HealResult(
+                            original_code=source_code,
+                            healed_code=source_code,
+                            diff="",
+                            can_heal=False,
+                            reason=f"Cannot auto-heal function '{func.name}': invalid expectation rule '{rule_name}': {exc}",
+                        )
+                    nondet_sql = _has_nondeterministic_sql(condition_sql)
+                    if nondet_sql:
+                        return HealResult(
+                            original_code=source_code,
+                            healed_code=source_code,
+                            diff="",
+                            can_heal=False,
+                            reason=(
+                                f"Refusing to auto-heal function '{func.name}': expectation rule '{rule_name}' "
+                                f"contains non-deterministic SQL function '{nondet_sql}'."
+                            ),
+                        )
+                    rules.append(rule)
                 elif len(dec.args) == 1 and isinstance(dec.args[0], ast.Dict):
                     for k, v in zip(dec.args[0].keys, dec.args[0].values, strict=False):
                         if (
-                            isinstance(k, ast.Constant)
-                            and isinstance(k.value, str)
-                            and isinstance(v, ast.Constant)
-                            and isinstance(v.value, str)
+                            k is None
+                            or not isinstance(k, ast.Constant)
+                            or not isinstance(k.value, str)
+                            or not isinstance(v, ast.Constant)
+                            or not isinstance(v.value, str)
                         ):
-                            rules.append(ExpectationRule(rule_name=k.value, condition_sql=v.value))
+                            return HealResult(
+                                original_code=source_code,
+                                healed_code=source_code,
+                                diff="",
+                                can_heal=False,
+                                reason=(
+                                    f"Cannot auto-heal function '{func.name}': dynamic expectation "
+                                    "dictionary keys, values, or **spread cannot be safely resolved statically."
+                                ),
+                            )
+                        try:
+                            rule = ExpectationRule(rule_name=k.value, condition_sql=v.value)
+                        except ValueError as exc:
+                            return HealResult(
+                                original_code=source_code,
+                                healed_code=source_code,
+                                diff="",
+                                can_heal=False,
+                                reason=f"Cannot auto-heal function '{func.name}': invalid expectation rule '{k.value}': {exc}",
+                            )
+                        nondet_sql = _has_nondeterministic_sql(v.value)
+                        if nondet_sql:
+                            return HealResult(
+                                original_code=source_code,
+                                healed_code=source_code,
+                                diff="",
+                                can_heal=False,
+                                reason=(
+                                    f"Refusing to auto-heal function '{func.name}': expectation rule '{k.value}' "
+                                    f"contains non-deterministic SQL function '{nondet_sql}'."
+                                ),
+                            )
+                        rules.append(rule)
                 else:
                     return HealResult(
                         original_code=source_code,
@@ -165,6 +329,35 @@ def auto_heal_source(
 
         if not rules:
             continue
+
+        # Compute leaf names for session views to avoid multi-part temporary view name errors
+        leaf_name = table_name.split(".")[-1]
+        table_prefix = table_name[: -len(leaf_name)]
+        raw_view_name = f"{leaf_name}_raw"
+        staged_view_name = f"{leaf_name}_staged"
+        quarantine_table_name = f"{table_prefix}{leaf_name}{quarantine_suffix}"
+
+        # Refuse on name collisions with existing top-level definitions
+        generated_names = {
+            f"{func.name}_raw",
+            f"{func.name}_staged",
+            f"{func.name}_quarantine",
+            raw_view_name,
+            staged_view_name,
+            quarantine_table_name,
+        }
+        for cand in generated_names:
+            if cand in existing_top_level_names and cand != func.name:
+                return HealResult(
+                    original_code=source_code,
+                    healed_code=source_code,
+                    diff="",
+                    can_heal=False,
+                    reason=(
+                        f"Refusing to auto-heal function '{func.name}': synthesized name "
+                        f"'{cand}' collides with an existing definition in the file."
+                    ),
+                )
 
         # Detect streaming vs batch
         is_streaming = _detect_is_streaming(func)
@@ -220,14 +413,12 @@ def auto_heal_source(
             raw_func_code += "\n"
 
         # Build raw view decorator
-        raw_view_name = f"{table_name}_raw"
         if flavor == "dp":
             raw_dec = f'@dp.temporary_view(name="{raw_view_name}")'
         else:
             raw_dec = f'@dlt.view(name="{raw_view_name}")'
 
         # Build staged view
-        staged_view_name = f"{table_name}_staged"
         if flavor == "dp":
             staged_dec = f'@dp.temporary_view(name="{staged_view_name}")'
             read_raw_expr = (
@@ -296,7 +487,6 @@ def auto_heal_source(
         )
 
         # Build quarantine table
-        quarantine_table_name = f"{table_name}{quarantine_suffix}"
         if flavor == "dp":
             quarantine_dec = f'@dp.table(name="{quarantine_table_name}")'
         else:
