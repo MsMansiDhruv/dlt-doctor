@@ -159,7 +159,13 @@ def generate_healed_pipeline_nodes(
     warn_rules = [r for r in rules if r.action_on_failure == "warn"]
     fail_rules = [r for r in rules if r.action_on_failure == "fail"]
 
-    # Retain metrics in event log: keep retain-only @expect_all on staged view below the view decorator
+    # Retain metrics in event log:
+    # Staged view is read by both clean and quarantine tables. Per Databricks documentation,
+    # views queried by multiple downstream datasets can report multiple sets of metrics or
+    # no metrics. Therefore, retain-only @expect_all is placed on the clean table and on the
+    # quarantine table rather than the shared staged view.
+    # Per-rule totals are: clean.passed + quarantine.passed + quarantine.failed, with no double counting.
+    expect_all_dec = ""
     if quarantine_rules:
         entries: list[str] = []
         for r in quarantine_rules:
@@ -167,9 +173,9 @@ def generate_healed_pipeline_nodes(
             c_esc = r.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
             entries.append(f'        "{r_esc}": "{c_esc}",')
         dict_body = "{\n" + "\n".join(entries) + "\n    }"
-        staged_decs = f"{view_dec}\n@{pkg}.expect_all({dict_body})"
-    else:
-        staged_decs = view_dec
+        expect_all_dec = f"@{pkg}.expect_all({dict_body})"
+
+    staged_decs = view_dec
 
     # Readers
     if flavor == "dp":
@@ -236,6 +242,9 @@ def generate_healed_pipeline_nodes(
             f'@{pkg}.table(\n    name="{clean_table_name}",\n    comment="{clean_comment}",\n)'
         )
 
+    if expect_all_dec:
+        clean_decs.append(expect_all_dec)
+
     for wr in warn_rules:
         wr_esc = wr.rule_name.replace('"', '\\"')
         wc_esc = wr.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
@@ -264,11 +273,12 @@ def generate_healed_pipeline_nodes(
     # Quarantine table
     quarantine_func = quarantine_func_name or f"{clean_func_name}_quarantine"
     retention_props = filter_retention_table_properties(table_properties or {})
+    quar_decs: list[str] = []
 
     if retention_props:
         props_lines = [f'        "{k}": "{v}",' for k, v in sorted(retention_props.items())]
         props_dict_str = "{\n" + "\n".join(props_lines) + "\n    }"
-        quarantine_dec = (
+        quar_decs.append(
             f"@{pkg}.table(\n"
             f'    name="{quarantine_table_name}",\n'
             f'    comment="{quarantine_comment}",\n'
@@ -276,15 +286,20 @@ def generate_healed_pipeline_nodes(
             f")"
         )
     else:
-        quarantine_dec = (
+        quar_decs.append(
             f"@{pkg}.table(\n"
             f'    name="{quarantine_table_name}",\n'
             f'    comment="{quarantine_comment}",\n'
             f")"
         )
 
+    if expect_all_dec:
+        quar_decs.append(expect_all_dec)
+
+    quarantine_decs_str = "\n".join(quar_decs)
+
     quarantine_func_code = (
-        f"{quarantine_dec}\n"
+        f"{quarantine_decs_str}\n"
         f"def {quarantine_func}():\n"
         f"    return (\n"
         f"        {read_staged_call}\n"
@@ -296,7 +311,34 @@ def generate_healed_pipeline_nodes(
 
 
 class ExpectationDoctor:
-    """Manages resilient quality gates without silent data drops or pipeline halts."""
+    """Manages resilient quality gates without silent data drops or pipeline halts.
+
+    Event Log Metrics & Data Quality Auditing:
+    Retain-only expectations (`@expect_all`) are placed on both the clean table and the
+    quarantine table rather than the shared intermediate staging view. In Databricks Delta
+    Live Tables and Lakeflow Declarative Pipelines, intermediate views read by multiple downstream
+    datasets may produce duplicated metrics or omit metrics because views are evaluated lazily.
+
+    With dual-dataset metrics:
+    - `clean.passed`: rows successfully written to clean table (all quarantine rules satisfied).
+    - `clean.failed`: 0 (clean table drops all failed rows).
+    - `quarantine.passed`: rows in quarantine that satisfied a particular rule (failed on another).
+    - `quarantine.failed`: rows in quarantine that failed that specific rule.
+    - Total per-rule evaluated rows: `clean.passed + quarantine.passed + quarantine.failed` with
+      no double-counting.
+
+    To query expectation metrics from the Databricks Event Log:
+    ```sql
+    SELECT
+        timestamp,
+        message,
+        details:flow_progress.metrics.expectations AS expectations_metrics,
+        details:flow_progress.data_quality.expectations AS dq_expectations
+    FROM event_log(TABLE(<pipeline_target_table>))
+    WHERE event_type = 'flow_progress'
+    ORDER BY timestamp DESC;
+    ```
+    """
 
     def __init__(self) -> None:
         pass

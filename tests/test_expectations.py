@@ -199,8 +199,10 @@ def test_quarantine_routing_plan_to_dict_includes_source_table() -> None:
     assert d["target_quarantine_table"] == "tbl_quarantine"
 
 
-def test_staged_view_retains_expect_all_for_event_log_metrics() -> None:
-    """Staged view must retain @dlt.expect_all (or @dp.expect_all) to preserve event-log metrics."""
+def test_clean_and_quarantine_tables_retain_expect_all_for_event_log_metrics() -> None:
+    """Clean and quarantine tables must emit retain-only @dlt.expect_all (or @dp.expect_all)
+    to preserve event-log metrics without double-counting, while intermediate view has no expectations.
+    """
     doctor = ExpectationDoctor()
     rules = [
         ExpectationRule("valid_id", "id IS NOT NULL", action_on_failure="quarantine"),
@@ -209,7 +211,19 @@ def test_staged_view_retains_expect_all_for_event_log_metrics() -> None:
     plan = doctor.build_quarantine_routing("orders", rules)
     code = doctor.generate_pipeline_code(plan, source_table="bronze", flavor="dlt")
 
-    assert "@dlt.expect_all({" in code
+    # Intermediate staged view should NOT have expect_all
+    assert '@dlt.view(name="orders_staged")\ndef orders_staged():' in code
+
+    # Clean table has expect_all below dataset decorator
+    assert (
+        '@dlt.table(\n    name="orders",\n    comment="Clean records passing all expectation contracts.",\n)\n@dlt.expect_all({'
+        in code
+    )
+    # Quarantine table has expect_all below dataset decorator
+    assert (
+        '@dlt.table(\n    name="orders_quarantine",\n    comment="Quarantined records failing business expectations for triage.",\n)\n@dlt.expect_all({'
+        in code
+    )
     assert '"valid_id": "id IS NOT NULL"' in code
     assert '"positive_amt": "amount > 0"' in code
 
@@ -352,8 +366,19 @@ def test_pyspark_integration_dp_flavor_pipeline_execution(
     plan = doctor.build_quarantine_routing("silver_orders", rules)
     pipeline_code = doctor.generate_pipeline_code(plan, source_table="bronze_orders", flavor="dp")
 
-    # Assert decorator order: dataset decorator is above expectation decorator
-    assert '@dp.temporary_view(name="silver_orders_staged")\n@dp.expect_all({' in pipeline_code
+    # Assert decorator order: dataset decorator is above expectation decorator on clean and quarantine tables
+    assert (
+        '@dp.temporary_view(name="silver_orders_staged")\ndef silver_orders_staged():'
+        in pipeline_code
+    )
+    assert (
+        '@dp.table(\n    name="silver_orders",\n    comment="Clean records passing all expectation contracts.",\n)\n@dp.expect_all({'
+        in pipeline_code
+    )
+    assert (
+        '@dp.table(\n    name="silver_orders_quarantine",\n    comment="Quarantined records failing business expectations for triage.",\n)\n@dp.expect_all({'
+        in pipeline_code
+    )
     assert '@dp.expect("warn_small"' in pipeline_code
 
     # Execute with proxy spark and stub dp
