@@ -39,7 +39,7 @@ class CdcDoctor:
         target_table: str,
         primary_keys: list[str],
         event_time_col: str = "updated_at",
-        sequence_col: str = "_cdc_seq_id",
+        sequence_col: str | None = None,
         partition_col: str | None = None,
         source_is_cdf: bool = True,
         value_cols: list[str] | None = None,
@@ -51,7 +51,11 @@ class CdcDoctor:
         clean_target = _validate_identifier(target_table)
         clean_keys = [_validate_identifier(k) for k in primary_keys]
         clean_time = _validate_identifier(event_time_col)
-        clean_seq = _validate_identifier(sequence_col)
+        # Change Data Feed (CDF) emits _commit_version by default; non-CDF streams use custom sequence
+        if sequence_col is None or sequence_col == "_cdc_seq_id":
+            clean_seq = "_commit_version" if source_is_cdf else "_cdc_seq_id"
+        else:
+            clean_seq = _validate_identifier(sequence_col)
         clean_part = _validate_identifier(partition_col) if partition_col else None
         clean_values = [_validate_identifier(v) for v in value_cols] if value_cols else []
 
@@ -71,8 +75,10 @@ class CdcDoctor:
         del_join = " AND ".join(f"target.{k} = del.{k}" for k in clean_keys)
 
         partition_clause = ""
+        del_part_clause = ""
         if clean_part:
             partition_clause = f"AND target.{clean_part} = source.{clean_part} "
+            del_part_clause = f"AND target.{clean_part} = del.{clean_part} "
 
         # In-batch deduplication with proper 4-space indentation
         cdf_filter = (
@@ -101,7 +107,7 @@ class CdcDoctor:
             f"-- 1. Delete clause: process CDC deletes with recency guard\n"
             f"MERGE INTO {clean_target} AS target\n"  # nosec B608
             f"USING cdc_deletes_batch AS del\n"
-            f"ON {del_join}\n"
+            f"ON {del_join} {del_part_clause}\n"
             f"WHEN MATCHED AND (target.{clean_time} IS NULL OR del.{clean_time} >= target.{clean_time}) THEN DELETE;"
         )
 
@@ -183,27 +189,40 @@ class CdcDoctor:
                 f"    VALUES ({insert_vals_str});"
             )
 
+            if source_is_cdf:
+                scd2_delete_sql = (
+                    f"\n\n-- Close active SCD2 records for CDC delete events\n"
+                    f"MERGE INTO {clean_target} AS target\n"  # nosec B608
+                    f"USING cdc_deletes_batch AS del\n"
+                    f"ON {del_join} AND target.is_current = true {del_part_clause}\n"
+                    f"WHEN MATCHED AND (target.valid_from IS NULL OR del.{clean_time} > target.valid_from) THEN\n"
+                    f"    UPDATE SET is_current = false, valid_to = del.{clean_time};"
+                )
+                scd2_sql = f"{scd2_sql}{scd2_delete_sql}"
+
+        target_leaf = clean_target.split(".")[-1]
+        cdf_clean_view = f"{target_leaf}_cdf_clean"
         auto_cdc_target_func = clean_target.replace(".", "_")
         auto_cdc_code = (
             (
                 "# Modern Databricks Lakeflow Declarative CDC pattern (Recommended)\n"
-                "import dlt\n"
+                "from pyspark import pipelines as dp\n"
                 "from pyspark.sql import functions as F\n\n"
                 "# 1. Clean CDF stream to filter update_preimage before change application\n"
-                f"@dlt.view(name='{clean_target}_cdf_clean')\n"
+                f"@dp.temporary_view(name='{cdf_clean_view}')\n"
                 f"def {auto_cdc_target_func}_cdf_clean():\n"
                 f"    return (\n"
-                f"        dlt.read_stream('{clean_source}')\n"
+                f"        spark.readStream.table('{clean_source}')\n"
                 f"        .filter(F.col('_change_type') != 'update_preimage')\n"
                 f"    )\n\n"
                 "# 2. Declare target streaming table before applying changes\n"
-                "dlt.create_streaming_table(\n"
+                "dp.create_streaming_table(\n"
                 f"    name='{clean_target}'\n"
                 ")\n\n"
                 "# 3. Declare CDC flow into streaming table using create_auto_cdc_flow\n"
-                "dlt.create_auto_cdc_flow(\n"
+                "dp.create_auto_cdc_flow(\n"
                 f"    target='{clean_target}',\n"
-                f"    source='{clean_target}_cdf_clean',\n"
+                f"    source='{cdf_clean_view}',\n"
                 f"    keys=[{pk_str}],\n"
                 f"    sequence_by=F.col('{clean_seq}'),\n"
                 "    apply_as_deletes=F.expr(\"_change_type = 'delete'\"),\n"

@@ -143,10 +143,10 @@ def test_scd2_requires_value_cols() -> None:
 
 
 def test_auto_cdc_creates_streaming_table() -> None:
-    """AUTO CDC template must include dlt.create_streaming_table before dlt.create_auto_cdc_flow and filter update_preimage."""
+    """AUTO CDC template must include dp.create_streaming_table before dp.create_auto_cdc_flow and filter update_preimage."""
     doctor = CdcDoctor()
     template = doctor.generate_cdc_templates(
-        target_table="silver_orders",
+        target_table="main.silver.orders",
         primary_keys=["order_id"],
         source_stream="bronze_orders_cdc",
         include_auto_cdc=True,
@@ -157,11 +157,28 @@ def test_auto_cdc_creates_streaming_table() -> None:
     parsed_ast = ast.parse(code)
     assert parsed_ast is not None
 
+    # Must use leaf name for temporary view
+    assert "@dp.temporary_view(name='orders_cdf_clean')" in code
     # Must filter update_preimage and declare create_streaming_table before create_auto_cdc_flow
     assert "update_preimage" in code
-    assert "dlt.create_streaming_table" in code
-    assert "dlt.create_auto_cdc_flow" in code
-    assert code.index("dlt.create_streaming_table") < code.index("dlt.create_auto_cdc_flow")
+    assert "dp.create_streaming_table" in code
+    assert "dp.create_auto_cdc_flow" in code
+    assert code.index("dp.create_streaming_table") < code.index("dp.create_auto_cdc_flow")
+
+
+def test_cdc_sequence_col_defaults_to_commit_version_for_cdf() -> None:
+    """When source_is_cdf=True, sequence_col must default to _commit_version."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        source_stream="bronze_cdc",
+        source_is_cdf=True,
+        include_auto_cdc=True,
+    )
+    assert "_commit_version" in template.microbatch_dedup_code
+    assert "_cdc_seq_id" not in template.microbatch_dedup_code
+    assert "_commit_version" in template.auto_cdc_code
 
 
 def test_source_is_cdf_false_omits_change_type() -> None:
@@ -198,9 +215,11 @@ def test_cdc_custom_source_stream_and_template_attributes() -> None:
         source_stream="bronze_customers_cdc",
         partition_col="region",
         value_cols=["name", "email"],
+        include_auto_cdc=True,
     )
     assert template.source_stream == "bronze_customers_cdc"
-    assert "dlt.read_stream('bronze_customers_cdc')" in template.auto_cdc_code
+    assert "spark.readStream.table('bronze_customers_cdc')" in template.auto_cdc_code
+    assert "@dp.temporary_view(name='customers_cdf_clean')" in template.auto_cdc_code
     assert "target.region = source.region" in template.scd1_merge_sql
     assert "email" in template.scd2_merge_sql
 
@@ -259,34 +278,53 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
             (2, 200.0, '2026-01-01 10:00:00')
         """)
 
-        # Batch 1:
-        # - In-order upsert on id=1 (11:00:00, 150.0)
-        # - New row insert on id=3 (11:00:00, 300.0)
-        # - Late delete on id=1 (08:00:00) -> must be ignored by recency guard
-        # - In-order delete on id=2 (12:00:00) -> must delete id=2
-        spark.sql("""
-            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
-            SELECT 1 AS id, 150.0 AS amt, '2026-01-01 11:00:00' AS updated_at
-            UNION ALL
-            SELECT 3 AS id, 300.0 AS amt, '2026-01-01 11:00:00' AS updated_at
-        """)
-        spark.sql("""
-            CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS
-            SELECT 1 AS id, 100.0 AS amt, '2026-01-01 08:00:00' AS updated_at
-            UNION ALL
-            SELECT 2 AS id, 200.0 AS amt, '2026-01-01 12:00:00' AS updated_at
-        """)
-
         tmpl_scd1 = doctor.generate_cdc_templates(
             target_table="default.test_cdc_scd1_orders",
             primary_keys=["id"],
             event_time_col="updated_at",
             source_is_cdf=True,
         )
-        for stmt in tmpl_scd1.scd1_merge_sql.split(";"):
-            cleaned = stmt.strip()
-            if cleaned:
-                spark.sql(cleaned)
+
+        # Execute generated merge_cdc_microbatch directly on CDF-shaped DataFrame
+        loc: dict[str, Any] = {}
+        exec(tmpl_scd1.microbatch_dedup_code, loc)
+        merge_fn = loc["merge_cdc_microbatch"]
+
+        from pyspark.sql.types import (
+            DoubleType,
+            IntegerType,
+            LongType,
+            StringType,
+            StructField,
+            StructType,
+        )
+
+        cdf_schema = StructType(
+            [
+                StructField("id", IntegerType(), False),
+                StructField("amt", DoubleType(), True),
+                StructField("updated_at", StringType(), True),
+                StructField("_change_type", StringType(), True),
+                StructField("_commit_version", LongType(), True),
+                StructField("_commit_timestamp", LongType(), True),
+            ]
+        )
+
+        # Batch 1:
+        # - In-order upsert on id=1 (11:00:00, 150.0, v=101)
+        # - Update preimage on id=1 (10:00:00, 100.0, v=101) -> filtered out
+        # - Older in-batch duplicate on id=1 (10:30:00, 120.0, v=100) -> deduplicated out
+        # - New row insert on id=3 (11:00:00, 300.0, v=103)
+        # - In-order delete on id=2 (12:00:00, 200.0, v=102) -> deletes id=2
+        batch1_data = [
+            (1, 100.0, "2026-01-01 10:00:00", "update_preimage", 101, 1000),
+            (1, 150.0, "2026-01-01 11:00:00", "update_postimage", 101, 1000),
+            (1, 120.0, "2026-01-01 10:30:00", "update_postimage", 100, 900),
+            (2, 200.0, "2026-01-01 12:00:00", "delete", 102, 2000),
+            (3, 300.0, "2026-01-01 11:00:00", "insert", 103, 3000),
+        ]
+        batch1_df = spark.createDataFrame(batch1_data, schema=cdf_schema)
+        merge_fn(batch1_df, 1)
 
         scd1_rows = {
             (r.id, r.amt, r.updated_at)
@@ -300,15 +338,10 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
             (3, 300.0, "2026-01-01 11:00:00"),
         }
 
-        # Late upsert on id=1 at 09:00:00 -> must be ignored by recency guard
-        spark.sql("""
-            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
-            SELECT 1 AS id, 999.0 AS amt, '2026-01-01 09:00:00' AS updated_at
-        """)
-        for stmt in tmpl_scd1.scd1_merge_sql.split(";"):
-            cleaned = stmt.strip()
-            if cleaned:
-                spark.sql(cleaned)
+        # Late upsert on id=1 at 09:00:00 (v=99) -> must be ignored by recency guard
+        late_data = [(1, 999.0, "2026-01-01 09:00:00", "update_postimage", 99, 800)]
+        late_df = spark.createDataFrame(late_data, schema=cdf_schema)
+        merge_fn(late_df, 2)
 
         scd1_rows_after_late = {
             (r.id, r.amt, r.updated_at)
@@ -318,7 +351,7 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
         }
         assert scd1_rows_after_late == scd1_rows
 
-        # 2. SCD2 Delta Execution: in-order update, late update, brand new key
+        # 2. SCD2 Delta Execution: in-order update, late update, brand new key, and delete event
         spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd2_customers")
         spark.sql(f"""
             CREATE TABLE default.test_cdc_scd2_customers (
@@ -340,15 +373,27 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
             primary_keys=["id"],
             event_time_col="updated_at",
             value_cols=["name"],
+            source_is_cdf=True,
             include_scd2=True,
         )
+
+        def _run_scd2_sql() -> None:
+            for stmt in tmpl_scd2.scd2_merge_sql.split(";"):
+                cleaned = stmt.strip()
+                if cleaned:
+                    spark.sql(cleaned)
 
         # In-order update on id=1 at 12:00:00
         spark.sql("""
             CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
             SELECT 1 AS id, 'Alice V2' AS name, '2026-01-01 12:00:00' AS updated_at
         """)
-        spark.sql(tmpl_scd2.scd2_merge_sql)
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS
+            SELECT CAST(NULL AS INT) AS id, CAST(NULL AS STRING) AS name, CAST(NULL AS STRING) AS updated_at
+            WHERE 1 = 0
+        """)
+        _run_scd2_sql()
 
         current_id1 = spark.sql("""
             SELECT id, name, is_current, valid_from, valid_to
@@ -360,13 +405,24 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
         assert current_id1[0].valid_from == "2026-01-01 12:00:00"
         assert current_id1[0].valid_to is None
 
+        # Assert closed SCD2 row for Alice V1
+        closed_id1 = spark.sql("""
+            SELECT id, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_scd2_customers
+            WHERE id = 1 AND is_current = false
+        """).collect()
+        assert len(closed_id1) == 1
+        assert closed_id1[0].name == "Alice V1"
+        assert closed_id1[0].valid_from == "2026-01-01 10:00:00"
+        assert closed_id1[0].valid_to == "2026-01-01 12:00:00"
+
         # Late update on id=1 at 11:00:00 (< current valid_from 12:00:00)
         # Must be completely ignored; must NOT insert a duplicate is_current row!
         spark.sql("""
             CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
             SELECT 1 AS id, 'Alice Late' AS name, '2026-01-01 11:00:00' AS updated_at
         """)
-        spark.sql(tmpl_scd2.scd2_merge_sql)
+        _run_scd2_sql()
 
         current_id1_after_late = spark.sql("""
             SELECT id, name, is_current, valid_from, valid_to
@@ -381,7 +437,7 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
             CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
             SELECT 2 AS id, 'Bob New' AS name, '2026-01-01 13:00:00' AS updated_at
         """)
-        spark.sql(tmpl_scd2.scd2_merge_sql)
+        _run_scd2_sql()
 
         all_current = spark.sql("""
             SELECT id, name, is_current, valid_from, valid_to
@@ -394,6 +450,47 @@ def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
             (1, "Alice V2", True, "2026-01-01 12:00:00"),
             (2, "Bob New", True, "2026-01-01 13:00:00"),
         ]
+
+        # SCD2 Delete: close active record for Bob New (id=2) at 14:00:00
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT CAST(NULL AS INT) AS id, CAST(NULL AS STRING) AS name, CAST(NULL AS STRING) AS updated_at
+            WHERE 1 = 0
+        """)
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS
+            SELECT 2 AS id, 'Bob New' AS name, '2026-01-01 14:00:00' AS updated_at
+        """)
+        _run_scd2_sql()
+
+        # id=2 must no longer have an active record
+        current_id2 = spark.sql("""
+            SELECT id, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_scd2_customers
+            WHERE id = 2 AND is_current = true
+        """).collect()
+        assert len(current_id2) == 0
+
+        # id=2 must have a closed record with valid_to = '2026-01-01 14:00:00'
+        closed_id2 = spark.sql("""
+            SELECT id, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_scd2_customers
+            WHERE id = 2 AND is_current = false
+        """).collect()
+        assert len(closed_id2) == 1
+        assert closed_id2[0].name == "Bob New"
+        assert closed_id2[0].valid_from == "2026-01-01 13:00:00"
+        assert closed_id2[0].valid_to == "2026-01-01 14:00:00"
+
+        # Overall active rows should now only be Alice V2
+        remaining_current = spark.sql("""
+            SELECT id, name, is_current, valid_from
+            FROM default.test_cdc_scd2_customers
+            WHERE is_current = true
+        """).collect()
+        assert len(remaining_current) == 1
+        assert remaining_current[0].id == 1
+        assert remaining_current[0].name == "Alice V2"
     finally:
         spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd1_orders")
         spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd2_customers")
