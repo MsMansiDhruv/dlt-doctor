@@ -58,9 +58,25 @@ class DoctorConfig:
 
 def load_config(root_path: Path | str | None = None) -> DoctorConfig:
     """Discover and parse dlt-doctor configuration from pyproject.toml or dlt-doctor.toml."""
-    search_dir = Path(root_path) if root_path else Path.cwd()
-    if search_dir.is_file():
-        search_dir = search_dir.parent
+    target_path = Path(root_path) if root_path else Path.cwd()
+    if target_path.is_file() and target_path.exists():
+        try:
+            data = tomllib.loads(target_path.read_text(encoding="utf-8"))
+            section: dict[str, Any] = {}
+            if "tool" in data and "dlt-doctor" in data["tool"]:
+                section = data["tool"]["dlt-doctor"]
+            elif "dlt-doctor" in data:
+                section = data["dlt-doctor"]
+            elif data:
+                section = data
+
+            if section:
+                return _parse_config_dict(section)
+        except (tomllib.TOMLDecodeError, OSError):
+            return DoctorConfig()
+        search_dir = target_path.parent
+    else:
+        search_dir = target_path
 
     # Check dlt-doctor.toml then pyproject.toml
     config_files = [

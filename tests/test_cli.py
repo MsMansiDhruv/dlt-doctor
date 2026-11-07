@@ -34,6 +34,49 @@ def clean_it(x):
         assert exit_code == 1
 
 
+def test_cli_analyze_fail_on_none(tmp_path: Path) -> None:
+    test_file = tmp_path / "bad_pipeline.py"
+    test_file.write_text(
+        """
+from pyspark.sql.functions import udf
+@udf
+def clean_it(x):
+    return x
+""",
+        encoding="utf-8",
+    )
+
+    test_args = ["dlt-doctor", "analyze", str(test_file), "--fail-on", "NONE"]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
+def test_cli_analyze_custom_config_flag(tmp_path: Path) -> None:
+    test_file = tmp_path / "bad_pipeline.py"
+    test_file.write_text(
+        """
+from pyspark.sql.functions import udf
+@udf
+def clean_it(x):
+    return x
+""",
+        encoding="utf-8",
+    )
+    cfg_file = tmp_path / "my_config.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor]
+ignore = ["PYSPARK-001"]
+""",
+        encoding="utf-8",
+    )
+
+    test_args = ["dlt-doctor", "analyze", str(test_file), "--config", str(cfg_file)]
+    with patch("sys.argv", test_args):
+        exit_code = main()
+        assert exit_code == 0
+
+
 def test_cli_restate() -> None:
     test_args = [
         "dlt-doctor",

@@ -14,7 +14,11 @@ inputs:
   fail-on:
     description: "Failure severity threshold: CRITICAL, HIGH, MEDIUM, LOW, or NONE"
     required: false
-    default: "HIGH"
+    default: "CRITICAL"
+  check-heal:
+    description: "Check pipeline files for zero-loss quarantine compliance using heal --check"
+    required: false
+    default: "false"
   config:
     description: "Path to custom configuration file (e.g. pyproject.toml)"
     required: false
@@ -47,6 +51,13 @@ runs:
         python -m pip install --upgrade pip
         python -m pip install "${{ github.action_path }}"
 
+    - name: Run dlt-doctor heal check
+      if: ${{ inputs.check-heal == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        dlt-doctor heal "${{ inputs.path }}" --check
+
     - name: Run dlt-doctor analyze
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -57,21 +68,7 @@ runs:
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_SARIF_OUTPUT: ${{ inputs.sarif-output }}
       run: |
-        CMD=(dlt-doctor analyze "$INPUT_PATH" --format "$INPUT_FORMAT" --fail-on "$INPUT_FAIL_ON")
-        if [ -n "$INPUT_CONFIG" ]; then
-          CMD+=(--config "$INPUT_CONFIG")
-        fi
-
-        MD_OUTPUT=$(dlt-doctor analyze "$INPUT_PATH" --format markdown || true)
-        if [ -n "$GITHUB_STEP_SUMMARY" ]; then
-          echo "$MD_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
-        fi
-
-        if [ -n "$INPUT_SARIF_OUTPUT" ]; then
-          dlt-doctor analyze "$INPUT_PATH" --format sarif > "$INPUT_SARIF_OUTPUT" || true
-        fi
-
-        "${CMD[@]}"
+        python -m dlt_doctor.action
 
 branding:
   icon: "activity"
