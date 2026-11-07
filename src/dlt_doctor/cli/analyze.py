@@ -58,10 +58,15 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Suffix for synthesized quarantine table (default: _quarantine)",
     )
     p.add_argument(
-        "--fail-on",
-        choices=["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+        "--config",
         default=None,
-        help="Exit code 1 severity threshold (default: config value or CRITICAL)",
+        help="Path to custom configuration file or directory containing pyproject.toml",
+    )
+    p.add_argument(
+        "--fail-on",
+        choices=["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "NONE"],
+        default=None,
+        help="Exit code 1 severity threshold (default: config value or CRITICAL, NONE to never fail)",
     )
 
 
@@ -98,8 +103,23 @@ def handle(args: argparse.Namespace) -> int:
             print(heal_res.reason or "No changes needed.")
         return 0
 
-    config = load_config(target)
-    fail_on_sev = DiagnosticSeverity(args.fail_on) if args.fail_on else config.fail_on
+    config_target = Path(args.config) if getattr(args, "config", None) else target
+    config = load_config(config_target)
+
+    severity_rank = {
+        DiagnosticSeverity.CRITICAL: 5,
+        DiagnosticSeverity.HIGH: 4,
+        DiagnosticSeverity.MEDIUM: 3,
+        DiagnosticSeverity.LOW: 2,
+        DiagnosticSeverity.INFO: 1,
+    }
+    fail_on_str = str(args.fail_on).upper() if args.fail_on else None
+    if fail_on_str == "NONE":
+        threshold = 999
+    elif fail_on_str:
+        threshold = severity_rank.get(DiagnosticSeverity(fail_on_str), 5)
+    else:
+        threshold = severity_rank.get(config.fail_on, 5)
 
     advisor = AdvisorDoctor()
     scanner = DirectoryScanner(config=config)
@@ -118,16 +138,6 @@ def handle(args: argparse.Namespace) -> int:
             print(dir_report.to_html())
         else:
             print(dir_report.to_text())
-
-        # Determine exit code based on fail_on threshold
-        severity_rank = {
-            DiagnosticSeverity.CRITICAL: 5,
-            DiagnosticSeverity.HIGH: 4,
-            DiagnosticSeverity.MEDIUM: 3,
-            DiagnosticSeverity.LOW: 2,
-            DiagnosticSeverity.INFO: 1,
-        }
-        threshold = severity_rank.get(fail_on_sev, 5)
 
         for _, f in dir_report.all_findings:
             if severity_rank.get(f.severity, 0) >= threshold:
@@ -203,15 +213,6 @@ def handle(args: argparse.Namespace) -> int:
             print(f"Impact: {f.impact_summary}")
             print(f"Fix:    {f.recommendation}")
         print("-" * 70)
-
-    severity_rank = {
-        DiagnosticSeverity.CRITICAL: 5,
-        DiagnosticSeverity.HIGH: 4,
-        DiagnosticSeverity.MEDIUM: 3,
-        DiagnosticSeverity.LOW: 2,
-        DiagnosticSeverity.INFO: 1,
-    }
-    threshold = severity_rank.get(fail_on_sev, 5)
 
     for f in findings:
         if severity_rank.get(f.severity, 0) >= threshold:

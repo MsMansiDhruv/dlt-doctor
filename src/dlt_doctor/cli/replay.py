@@ -54,6 +54,36 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Partition value to filter in quarantine and target",
     )
+    p.add_argument(
+        "--valid-filter",
+        "--valid-filter-sql",
+        dest="valid_filter",
+        default=None,
+        help="SQL condition to revalidate rows before replaying",
+    )
+    p.add_argument(
+        "--allow-unvalidated",
+        action="store_true",
+        default=False,
+        help="Explicitly permit replay without a revalidation filter",
+    )
+    p.add_argument(
+        "--erasure-table",
+        default=None,
+        help="Optional table of erased/tombstoned primary keys to guard against resurrection",
+    )
+    p.add_argument(
+        "--allow-resurrection",
+        action="store_true",
+        default=False,
+        help="Explicitly permit replay without an erasure guard table",
+    )
+    p.add_argument(
+        "--erasure-partition-col",
+        action="store_true",
+        default=False,
+        help="Include partition column in erasure table anti-join",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -69,6 +99,11 @@ def handle(args: argparse.Namespace) -> int:
             partition_col=args.partition_col,
             partition_val=args.partition_val,
             mark_replayed=args.mark_replayed,
+            valid_filter_sql=args.valid_filter,
+            allow_unvalidated=args.allow_unvalidated,
+            erasure_table=getattr(args, "erasure_table", None),
+            erasure_partition_col=getattr(args, "erasure_partition_col", False),
+            allow_resurrection=getattr(args, "allow_resurrection", False),
         )
     except ValueError as exc:
         import sys

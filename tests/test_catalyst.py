@@ -80,3 +80,30 @@ AdaptiveSparkPlan isFinalPlan=false
 
     assert any(f.rule_id == "PLAN-001" for f in findings)
     assert any(f.rule_id == "PLAN-003" for f in findings)
+
+
+def test_readme_act1_code_produces_findings() -> None:
+    """The Act 1 walkthrough code snippet from README.md must produce genuine findings."""
+    code = """
+from pyspark.sql import functions as F
+from pyspark.sql.functions import udf
+
+@udf
+def clean_it(x):
+    return x.strip() if x else None
+
+df_clean = (
+    df.withColumn("c1", F.col("a"))
+      .withColumn("c2", F.col("b"))
+      .withColumn("c3", F.col("c"))
+      .withColumn("c4", F.col("d"))
+      .withColumn("clean_val", clean_it(F.col("raw")))
+      .repartition(4)
+)
+"""
+    doctor = PlanDoctor()
+    findings = doctor.analyze_source_code(code)
+    rule_ids = {f.rule_id for f in findings}
+    assert "PYSPARK-001" in rule_ids, "Expected Python UDF finding"
+    assert "PYSPARK-002" in rule_ids, "Expected deep withColumn cascade finding"
+    assert "PYSPARK-004" in rule_ids, "Expected explicit repartition shuffle finding"

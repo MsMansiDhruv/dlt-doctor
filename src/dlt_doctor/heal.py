@@ -5,10 +5,18 @@ from __future__ import annotations
 import ast
 import difflib
 import re
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from dlt_doctor.expectations import ExpectationRule
+import sqlglot
+from sqlglot import expressions as exp
+
+from dlt_doctor.config import DoctorConfig
+from dlt_doctor.expectations import (
+    ExpectationRule,
+    generate_healed_pipeline_nodes,
+)
 
 
 @dataclass
@@ -21,6 +29,7 @@ class HealResult:
     can_heal: bool
     reason: str = ""
     tables_healed: list[str] | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 SUFFIX_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
@@ -28,15 +37,64 @@ NONDETERMINISTIC_FUNCS = {
     "rand",
     "randn",
     "uuid",
+    "random",
+}
+STATEFUL_STREAMING_METHODS = {
+    "groupby",
+    "group_by",
+    "agg",
+    "aggregate",
+    "dropduplicates",
+    "drop_duplicates",
+    "withwatermark",
+    "with_watermark",
+}
+SQL_NONDETERMINISTIC_FUNCS = {
     "current_timestamp",
-    "current_date",
-    "monotonically_increasing_id",
     "now",
+    "rand",
+    "randn",
+    "uuid",
+    "monotonically_increasing_id",
     "unix_timestamp",
+    "current_timezone",
+}
+SQL_TEMPORAL_WARN_FUNCS = {
+    "current_date",
 }
 
 
-def _has_nondeterministic_calls(func_node: ast.FunctionDef) -> bool:
+def _is_str_join(node: ast.Call) -> bool:
+    """Check if an ast.Call is a string join call (e.g. ', '.join(cols))."""
+    if not (isinstance(node.func, ast.Attribute) and node.func.attr.lower() == "join"):
+        return False
+    # Receiver is a string literal (e.g. ", ".join(...))
+    if isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str):
+        return True
+    # Receiver is an f-string or string formatting
+    if isinstance(node.func.value, ast.JoinedStr):
+        return True
+    # Single argument is a list/tuple/set literal, e.g. sep.join(['a', 'b'])
+    return len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple, ast.Set))
+
+
+def _count_stream_reads(func_node: ast.FunctionDef) -> int:
+    count = 0
+    for node in ast.walk(func_node):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"readStream", "read_stream"}
+        ):
+            count += 1
+    return count
+
+
+def _has_stateful_or_nondet_calls(
+    func_node: ast.FunctionDef, is_streaming: bool
+) -> tuple[bool, str]:
+    num_streams = _count_stream_reads(func_node) if is_streaming else 0
+
     for node in ast.walk(func_node):
         if isinstance(node, ast.Call):
             func_name = ""
@@ -44,15 +102,132 @@ def _has_nondeterministic_calls(func_node: ast.FunctionDef) -> bool:
                 func_name = node.func.id
             elif isinstance(node.func, ast.Attribute):
                 func_name = node.func.attr
-            if func_name.lower() in NONDETERMINISTIC_FUNCS:
-                return True
+            name_lower = func_name.lower()
+            if name_lower in NONDETERMINISTIC_FUNCS:
+                return True, f"non-deterministic call '{func_name}'"
+            if is_streaming:
+                if name_lower in STATEFUL_STREAMING_METHODS:
+                    return True, f"stateful streaming operation '{func_name}'"
+                if name_lower == "join":
+                    if _is_str_join(node):
+                        continue
+                    # Stream-stream joins (2+ streams) are stateful; stream-static joins (1 stream) are allowed
+                    if num_streams > 1:
+                        return True, f"stateful stream-stream join '{func_name}'"
+    return False, ""
+
+
+def _check_sql_determinism(condition_sql: str) -> tuple[str | None, str | None]:
+    """Check SQL condition for non-deterministic functions (refused) or temporal boundary functions (warned)."""
+    try:
+        parsed = sqlglot.parse(condition_sql, read="spark")
+    except Exception:
+        return None, None
+    refusal_fn: str | None = None
+    warn_fn: str | None = None
+    for stmt in parsed:
+        if stmt is None:
+            continue
+        for node in stmt.walk():
+            name = ""
+            if isinstance(node, exp.Func):
+                name = node.sql_name().lower()
+            elif isinstance(node, exp.Anonymous):
+                name = node.this.lower()
+            if name in SQL_NONDETERMINISTIC_FUNCS:
+                refusal_fn = name
+                return refusal_fn, warn_fn
+            if name in SQL_TEMPORAL_WARN_FUNCS and not warn_fn:
+                warn_fn = name
+    return refusal_fn, warn_fn
+
+
+def _has_suppression_comment(
+    lines: list[str], func_node: ast.FunctionDef, rule_id: str = "DD001"
+) -> bool:
+    """Check if function or preceding lines contain # dlt-doctor: ignore[DD001]."""
+    first_line = func_node.lineno
+    if func_node.decorator_list:
+        first_line = min(getattr(d, "lineno", func_node.lineno) for d in func_node.decorator_list)
+    start_line = max(0, first_line - 4)
+    end_line = min(
+        len(lines), getattr(func_node, "end_lineno", func_node.lineno) or func_node.lineno
+    )
+
+    for i in range(start_line, end_line):
+        line = lines[i]
+        if "#" in line:
+            comment = line[line.index("#") :].strip()
+            if comment.startswith("# dlt-doctor: ignore"):
+                after = comment[len("# dlt-doctor: ignore") :].strip()
+                if not after:
+                    return True
+                if after.startswith("[") and after.endswith("]"):
+                    rules = [r.strip().upper() for r in after[1:-1].split(",")]
+                    if rule_id.upper() in rules or "ALL" in rules:
+                        return True
     return False
 
 
+def _has_file_level_suppression(lines: list[str], rule_id: str = "DD001") -> bool:
+    """Check if top lines of file contain # dlt-doctor: ignore[DD001]."""
+    for line in lines[:20]:
+        clean = line.strip()
+        if clean.startswith("#") and "dlt-doctor: ignore" in clean:
+            comment = clean[clean.index("dlt-doctor: ignore") :]
+            after = comment[len("dlt-doctor: ignore") :].strip()
+            if not after:
+                return True
+            if after.startswith("[") and after.endswith("]"):
+                rules = [r.strip().upper() for r in after[1:-1].split(",")]
+                if rule_id.upper() in rules or "ALL" in rules:
+                    return True
+    return False
+
+
+def _has_comment_in_scope(lines: list[str], node: ast.FunctionDef, comment: str) -> bool:
+    """Check if preceding lines or function body contains a specific comment."""
+    first_line = node.lineno
+    if node.decorator_list:
+        first_line = min(getattr(d, "lineno", node.lineno) for d in node.decorator_list)
+    start_line = max(0, first_line - 4)
+    end_line = min(len(lines), getattr(node, "end_lineno", node.lineno) or node.lineno)
+    return any(comment in lines[i] for i in range(start_line, end_line))
+
+
+def _extract_table_name(func_node: ast.FunctionDef) -> str:
+    """Extract table name from decorator kwargs or fallback to function name."""
+    for dec in func_node.decorator_list:
+        if isinstance(dec, ast.Call):
+            for kw in dec.keywords:
+                if (
+                    kw.arg == "name"
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
+                    return kw.value.value
+    return func_node.name
+
+
 def auto_heal_source(
-    source_code: str, file_path: str = "pipeline.py", quarantine_suffix: str = "_quarantine"
+    source_code: str,
+    file_path: str = "pipeline.py",
+    quarantine_suffix: str = "_quarantine",
+    config: DoctorConfig | None = None,
 ) -> HealResult:
-    """Analyze source code and synthesize single-pass quarantine tables for expect_or_drop."""
+    """Analyze source code and synthesize single-pass quarantine tables for expect_or_drop.
+
+    Known Limitations & Derived Non-Deterministic Columns:
+    Pipelines that derive columns using `current_timestamp()`, `unix_timestamp()`, or
+    `monotonically_increasing_id()` inside Python DataFrame transformations (e.g.
+    `df.withColumn('ingested_at', current_timestamp())`) are not refused because those
+    operations are deterministic per microbatch execution. However, if an expectation
+    rule subsequently evaluates a condition on such a derived column (e.g.
+    `ingested_at >= current_date()`), the expectation outcome depends on when the
+    pipeline or replay is executed. Static analysis validates SQL expression ASTs
+    directly in expectation decorators, but cannot trace arbitrary cross-DataFrame
+    column lineage back to dynamic timestamp generators.
+    """
     if not SUFFIX_PATTERN.match(quarantine_suffix):
         raise ValueError(
             f"Invalid quarantine_suffix '{quarantine_suffix}'. Must match ^[A-Za-z0-9_]+$."
@@ -73,12 +248,75 @@ def auto_heal_source(
         "dp" if ("pyspark.pipelines" in source_code or "pipelines as dp" in source_code) else "dlt"
     )
 
+    # Check for any nested function definitions with expect_or_drop
+    all_funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    top_level_funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    nested_drop_funcs = [
+        f
+        for f in all_funcs
+        if f not in top_level_funcs and any(_is_drop_decorator(dec) for dec in f.decorator_list)
+    ]
+    if nested_drop_funcs:
+        first_nested = nested_drop_funcs[0]
+        return HealResult(
+            original_code=source_code,
+            healed_code=source_code,
+            diff="",
+            can_heal=False,
+            reason=(
+                f"Refusing to auto-heal nested function '{first_nested.name}': functions defined "
+                "inside loops, factories, or classes cannot be safely rewritten at module scope."
+            ),
+        )
+
+    # Collect existing top-level defined names to guard against collisions
+    existing_top_level_names: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.ClassDef)):
+            existing_top_level_names.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            for tgt in stmt.targets:
+                if isinstance(tgt, ast.Name):
+                    existing_top_level_names.add(tgt.id)
+
+    collected_warnings: list[str] = []
+
+    if config and not config.is_rule_enabled("DD001", Path(file_path).name):
+        return HealResult(
+            original_code=source_code,
+            healed_code=source_code,
+            diff="",
+            can_heal=True,
+            reason="Rule DD001 is ignored by configuration; file is compliant.",
+            tables_healed=[],
+            warnings=[],
+        )
+
+    lines_raw = source_code.splitlines()
+    if _has_file_level_suppression(lines_raw, "DD001"):
+        return HealResult(
+            original_code=source_code,
+            healed_code=source_code,
+            diff="",
+            can_heal=True,
+            reason="File contains inline suppression for DD001; file is compliant.",
+            tables_healed=[],
+            warnings=[],
+        )
+
     # Find functions with expect_or_drop
     target_funcs: list[ast.FunctionDef] = []
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             has_drop = any(_is_drop_decorator(dec) for dec in node.decorator_list)
             if has_drop:
+                if _has_suppression_comment(lines_raw, node, "DD001"):
+                    continue
+                if config and config.has_explicit_regulated_tables:
+                    t_name = _extract_table_name(node)
+                    has_reg = _has_comment_in_scope(lines_raw, node, "# dlt-doctor: regulated")
+                    if not config.is_regulated_table(t_name) and not has_reg:
+                        continue
                 target_funcs.append(node)
 
     if not target_funcs:
@@ -87,8 +325,9 @@ def auto_heal_source(
             healed_code=source_code,
             diff="",
             can_heal=True,
-            reason="No expect_or_drop decorators found; file is already compliant.",
+            reason="No unsuppressed expect_or_drop decorators found; file is compliant.",
             tables_healed=[],
+            warnings=[],
         )
 
     lines = source_code.splitlines(keepends=True)
@@ -110,7 +349,11 @@ def auto_heal_source(
                 ),
             )
 
-        if _has_nondeterministic_calls(func):
+        # Detect streaming vs batch
+        is_streaming = _detect_is_streaming(func)
+
+        is_bad, bad_reason = _has_stateful_or_nondet_calls(func, is_streaming=is_streaming)
+        if is_bad:
             return HealResult(
                 original_code=source_code,
                 healed_code=source_code,
@@ -118,17 +361,45 @@ def auto_heal_source(
                 can_heal=False,
                 reason=(
                     f"Refusing to auto-heal function '{func.name}': function body contains "
-                    "non-deterministic or stateful calls that would recompute different values across stages."
+                    f"{bad_reason} that would recompute different values across stages."
                 ),
             )
 
-        # Extract table decorator
+        # Extract table decorator and table name (support both positional and keyword 'name')
         table_dec = next((d for d in func.decorator_list if _is_table_decorator(d)), None)
         table_name = func.name
         if table_dec and isinstance(table_dec, ast.Call):
+            if table_dec.args:
+                if isinstance(table_dec.args[0], ast.Constant) and isinstance(
+                    table_dec.args[0].value, str
+                ):
+                    table_name = str(table_dec.args[0].value)
+                else:
+                    return HealResult(
+                        original_code=source_code,
+                        healed_code=source_code,
+                        diff="",
+                        can_heal=False,
+                        reason=(
+                            f"Cannot auto-heal function '{func.name}': dynamic or non-constant "
+                            "table name decorator argument cannot be safely resolved statically."
+                        ),
+                    )
             for kw in table_dec.keywords:
-                if kw.arg == "name" and isinstance(kw.value, ast.Constant):
-                    table_name = str(kw.value.value)
+                if kw.arg == "name":
+                    if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        table_name = str(kw.value.value)
+                    else:
+                        return HealResult(
+                            original_code=source_code,
+                            healed_code=source_code,
+                            diff="",
+                            can_heal=False,
+                            reason=(
+                                f"Cannot auto-heal function '{func.name}': dynamic or non-constant "
+                                "table name keyword argument cannot be safely resolved statically."
+                            ),
+                        )
 
         # Extract expectation rules from drop decorators
         rules: list[ExpectationRule] = []
@@ -137,20 +408,91 @@ def auto_heal_source(
                 if (
                     len(dec.args) >= 2
                     and isinstance(dec.args[0], ast.Constant)
+                    and isinstance(dec.args[0].value, str)
                     and isinstance(dec.args[1], ast.Constant)
+                    and isinstance(dec.args[1].value, str)
                 ):
                     rule_name = str(dec.args[0].value)
                     condition_sql = str(dec.args[1].value)
-                    rules.append(ExpectationRule(rule_name=rule_name, condition_sql=condition_sql))
+                    try:
+                        rule = ExpectationRule(rule_name=rule_name, condition_sql=condition_sql)
+                    except ValueError as exc:
+                        return HealResult(
+                            original_code=source_code,
+                            healed_code=source_code,
+                            diff="",
+                            can_heal=False,
+                            reason=f"Cannot auto-heal function '{func.name}': invalid expectation rule '{rule_name}': {exc}",
+                        )
+                    refusal_sql, warn_sql = _check_sql_determinism(condition_sql)
+                    if refusal_sql:
+                        return HealResult(
+                            original_code=source_code,
+                            healed_code=source_code,
+                            diff="",
+                            can_heal=False,
+                            reason=(
+                                f"Refusing to auto-heal function '{func.name}': expectation rule '{rule_name}' "
+                                f"contains non-deterministic SQL function '{refusal_sql}'."
+                            ),
+                        )
+                    if warn_sql:
+                        w_msg = (
+                            f"Expectation rule '{rule_name}' in function '{func.name}' contains '{warn_sql}()'. "
+                            "Records evaluated near boundary intervals may evaluate differently upon replay."
+                        )
+                        warnings.warn(w_msg, UserWarning, stacklevel=2)
+                        collected_warnings.append(w_msg)
+                    rules.append(rule)
                 elif len(dec.args) == 1 and isinstance(dec.args[0], ast.Dict):
                     for k, v in zip(dec.args[0].keys, dec.args[0].values, strict=False):
                         if (
-                            isinstance(k, ast.Constant)
-                            and isinstance(k.value, str)
-                            and isinstance(v, ast.Constant)
-                            and isinstance(v.value, str)
+                            k is None
+                            or not isinstance(k, ast.Constant)
+                            or not isinstance(k.value, str)
+                            or not isinstance(v, ast.Constant)
+                            or not isinstance(v.value, str)
                         ):
-                            rules.append(ExpectationRule(rule_name=k.value, condition_sql=v.value))
+                            return HealResult(
+                                original_code=source_code,
+                                healed_code=source_code,
+                                diff="",
+                                can_heal=False,
+                                reason=(
+                                    f"Cannot auto-heal function '{func.name}': dynamic expectation "
+                                    "dictionary keys, values, or **spread cannot be safely resolved statically."
+                                ),
+                            )
+                        try:
+                            rule = ExpectationRule(rule_name=k.value, condition_sql=v.value)
+                        except ValueError as exc:
+                            return HealResult(
+                                original_code=source_code,
+                                healed_code=source_code,
+                                diff="",
+                                can_heal=False,
+                                reason=f"Cannot auto-heal function '{func.name}': invalid expectation rule '{k.value}': {exc}",
+                            )
+                        refusal_sql, warn_sql = _check_sql_determinism(v.value)
+                        if refusal_sql:
+                            return HealResult(
+                                original_code=source_code,
+                                healed_code=source_code,
+                                diff="",
+                                can_heal=False,
+                                reason=(
+                                    f"Refusing to auto-heal function '{func.name}': expectation rule '{k.value}' "
+                                    f"contains non-deterministic SQL function '{refusal_sql}'."
+                                ),
+                            )
+                        if warn_sql:
+                            w_msg = (
+                                f"Expectation rule '{k.value}' in function '{func.name}' contains '{warn_sql}()'. "
+                                "Records evaluated near boundary intervals may evaluate differently upon replay."
+                            )
+                            warnings.warn(w_msg, UserWarning, stacklevel=2)
+                            collected_warnings.append(w_msg)
+                        rules.append(rule)
                 else:
                     return HealResult(
                         original_code=source_code,
@@ -166,8 +508,34 @@ def auto_heal_source(
         if not rules:
             continue
 
-        # Detect streaming vs batch
-        is_streaming = _detect_is_streaming(func)
+        # Compute leaf names for session views to avoid multi-part temporary view name errors
+        leaf_name = table_name.split(".")[-1]
+        table_prefix = table_name[: -len(leaf_name)]
+        raw_view_name = f"{leaf_name}_raw"
+        staged_view_name = f"{leaf_name}_staged"
+        quarantine_table_name = f"{table_prefix}{leaf_name}{quarantine_suffix}"
+
+        # Refuse on name collisions with existing top-level definitions
+        generated_names = {
+            f"{func.name}_raw",
+            f"{func.name}_staged",
+            f"{func.name}_quarantine",
+            raw_view_name,
+            staged_view_name,
+            quarantine_table_name,
+        }
+        for cand in generated_names:
+            if cand in existing_top_level_names and cand != func.name:
+                return HealResult(
+                    original_code=source_code,
+                    healed_code=source_code,
+                    diff="",
+                    can_heal=False,
+                    reason=(
+                        f"Refusing to auto-heal function '{func.name}': synthesized name "
+                        f"'{cand}' collides with an existing definition in the file."
+                    ),
+                )
 
         # Partition decorators
         non_drop_expect_decs = [
@@ -220,95 +588,39 @@ def auto_heal_source(
             raw_func_code += "\n"
 
         # Build raw view decorator
-        raw_view_name = f"{table_name}_raw"
         if flavor == "dp":
             raw_dec = f'@dp.temporary_view(name="{raw_view_name}")'
         else:
             raw_dec = f'@dlt.view(name="{raw_view_name}")'
 
-        # Build staged view
-        staged_view_name = f"{table_name}_staged"
-        if flavor == "dp":
-            staged_dec = f'@dp.temporary_view(name="{staged_view_name}")'
-            read_raw_expr = (
-                f'spark.readStream.table("{raw_view_name}")'
-                if is_streaming
-                else f'spark.read.table("{raw_view_name}")'
-            )
-            read_staged_expr = (
-                f'spark.readStream.table("{staged_view_name}")'
-                if is_streaming
-                else f'spark.read.table("{staged_view_name}")'
-            )
-        else:
-            staged_dec = f'@dlt.view(name="{staged_view_name}")'
-            read_raw_expr = (
-                f'dlt.read_stream("{raw_view_name}")'
-                if is_streaming
-                else f'dlt.read("{raw_view_name}")'
-            )
-            read_staged_expr = (
-                f'dlt.read_stream("{staged_view_name}")'
-                if is_streaming
-                else f'dlt.read("{staged_view_name}")'
-            )
+        # Extract table_properties from table_dec if present
+        extracted_table_props: dict[str, str] = {}
+        if isinstance(table_dec, ast.Call):
+            for kw in table_dec.keywords:
+                if kw.arg == "table_properties" and isinstance(kw.value, ast.Dict):
+                    for k, v in zip(kw.value.keys, kw.value.values, strict=False):
+                        if (
+                            isinstance(k, ast.Constant)
+                            and isinstance(v, ast.Constant)
+                            and isinstance(k.value, str)
+                            and isinstance(v.value, str)
+                        ):
+                            extracted_table_props[k.value] = v.value
 
-        # Build condition expressions for staged view
-        failed_items: list[str] = []
-        for r in rules:
-            cond_escaped = r.condition_sql.replace("\\", "\\\\").replace('"', '\\"')
-            r_escaped = r.rule_name.replace("\\", "\\\\").replace('"', '\\"')
-            failed_items.append(
-                f'                F.when(~F.expr("coalesce(({cond_escaped}), false)"), F.lit("{r_escaped}")),'
-            )
-        failed_rules_block = "\n".join(failed_items)
-
-        staged_func_code = (
-            f"{staged_dec}\n"
-            f"def {func.name}_staged():\n"
-            f"    return (\n"
-            f"        {read_raw_expr}\n"
-            f"        .select(\n"
-            f'            "*",\n'
-            f"            F.array_compact(\n"
-            f"                F.array(\n"
-            f"{failed_rules_block}\n"
-            f"                )\n"
-            f'            ).alias("_failed_rules"),\n'
-            f'            F.current_timestamp().alias("_quarantined_at"),\n'
-            f"        )\n"
-            f"    )\n"
-        )
-
-        # Build clean table
-        clean_decs: list[str] = [table_dec_text]
-        clean_decs.extend(expect_decs_text_list)
-        clean_decs_str = "\n".join(clean_decs)
-
-        clean_func_code = (
-            f"{clean_decs_str}\n"
-            f"def {func.name}():\n"
-            f"    return (\n"
-            f"        {read_staged_expr}\n"
-            f'        .filter(F.size(F.col("_failed_rules")) == 0)\n'
-            f'        .drop("_failed_rules", "_quarantined_at")\n'
-            f"    )\n"
-        )
-
-        # Build quarantine table
-        quarantine_table_name = f"{table_name}{quarantine_suffix}"
-        if flavor == "dp":
-            quarantine_dec = f'@dp.table(name="{quarantine_table_name}")'
-        else:
-            quarantine_dec = f'@dlt.table(name="{quarantine_table_name}")'
-
-        quarantine_func_code = (
-            f"{quarantine_dec}\n"
-            f"def {func.name}_quarantine():\n"
-            f"    return (\n"
-            f"        {read_staged_expr}\n"
-            f'        .filter(F.size(F.col("_failed_rules")) > 0)\n'
-            f"    )\n"
+        staged_func_code, clean_func_code, quarantine_func_code = generate_healed_pipeline_nodes(
+            clean_func_name=func.name,
+            clean_table_name=table_name,
+            quarantine_table_name=quarantine_table_name,
+            source_table_or_view=raw_view_name,
+            rules=rules,
+            flavor=flavor,
+            is_streaming=is_streaming,
+            clean_table_decorator_text=table_dec_text,
+            clean_extra_decorators=expect_decs_text_list,
+            table_properties=extracted_table_props,
+            quarantine_func_name=f"{func.name}_quarantine",
+            staging_func_name=f"{func.name}_staged",
+            staging_view_name=staged_view_name,
         )
 
         # Combine all parts
@@ -373,11 +685,15 @@ def auto_heal_source(
         diff=diff,
         can_heal=True,
         tables_healed=healed_tables,
+        warnings=collected_warnings,
     )
 
 
 def heal_file(
-    file_path: Path | str, write: bool = False, quarantine_suffix: str = "_quarantine"
+    file_path: Path | str,
+    write: bool = False,
+    quarantine_suffix: str = "_quarantine",
+    config: DoctorConfig | None = None,
 ) -> HealResult:
     """Run auto-heal on a file path, optionally writing back the changes."""
     path = Path(file_path)
@@ -385,7 +701,12 @@ def heal_file(
         raise FileNotFoundError(f"File not found: {path}")
 
     source_code = path.read_text(encoding="utf-8")
-    result = auto_heal_source(source_code, file_path=path.name, quarantine_suffix=quarantine_suffix)
+    result = auto_heal_source(
+        source_code,
+        file_path=path.name,
+        quarantine_suffix=quarantine_suffix,
+        config=config,
+    )
 
     if write and result.can_heal and result.diff:
         path.write_text(result.healed_code, encoding="utf-8")

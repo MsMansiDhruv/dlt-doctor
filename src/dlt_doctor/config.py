@@ -27,6 +27,7 @@ class DoctorConfig:
     regulated_tables: list[str] = field(
         default_factory=lambda: ["*orders*", "*customers*", "*txn*", "*finance*"]
     )
+    has_explicit_regulated_tables: bool = False
     per_file_ignores: dict[str, list[str]] = field(default_factory=dict)
     severity_overrides: dict[str, DiagnosticSeverity] = field(default_factory=dict)
 
@@ -57,9 +58,25 @@ class DoctorConfig:
 
 def load_config(root_path: Path | str | None = None) -> DoctorConfig:
     """Discover and parse dlt-doctor configuration from pyproject.toml or dlt-doctor.toml."""
-    search_dir = Path(root_path) if root_path else Path.cwd()
-    if search_dir.is_file():
-        search_dir = search_dir.parent
+    target_path = Path(root_path) if root_path else Path.cwd()
+    if target_path.is_file() and target_path.exists():
+        try:
+            data = tomllib.loads(target_path.read_text(encoding="utf-8"))
+            section: dict[str, Any] = {}
+            if "tool" in data and "dlt-doctor" in data["tool"]:
+                section = data["tool"]["dlt-doctor"]
+            elif "dlt-doctor" in data:
+                section = data["dlt-doctor"]
+            elif data:
+                section = data
+
+            if section:
+                return _parse_config_dict(section)
+        except (tomllib.TOMLDecodeError, OSError):
+            return DoctorConfig()
+        search_dir = target_path.parent
+    else:
+        search_dir = target_path
 
     # Check dlt-doctor.toml then pyproject.toml
     config_files = [
@@ -75,14 +92,14 @@ def load_config(root_path: Path | str | None = None) -> DoctorConfig:
         if cfg_file.exists():
             try:
                 data = tomllib.loads(cfg_file.read_text(encoding="utf-8"))
-                section: dict[str, Any] = {}
+                cfg_section: dict[str, Any] = {}
                 if "tool" in data and "dlt-doctor" in data["tool"]:
-                    section = data["tool"]["dlt-doctor"]
+                    cfg_section = data["tool"]["dlt-doctor"]
                 elif "dlt-doctor" in data:
-                    section = data["dlt-doctor"]
+                    cfg_section = data["dlt-doctor"]
 
-                if section:
-                    return _parse_config_dict(section)
+                if cfg_section:
+                    return _parse_config_dict(cfg_section)
             except (tomllib.TOMLDecodeError, OSError):
                 return DoctorConfig()
 
@@ -102,6 +119,7 @@ def _parse_config_dict(data: dict[str, Any]) -> DoctorConfig:
         with contextlib.suppress(ValueError):
             severity_overrides[r_id.upper()] = DiagnosticSeverity(str(sev).upper())
 
+    has_explicit_reg = "regulated_tables" in data
     return DoctorConfig(
         select=data.get("select", []),
         ignore=data.get("ignore", []),
@@ -109,6 +127,7 @@ def _parse_config_dict(data: dict[str, Any]) -> DoctorConfig:
         regulated_tables=data.get(
             "regulated_tables", ["*orders*", "*customers*", "*txn*", "*finance*"]
         ),
+        has_explicit_regulated_tables=has_explicit_reg,
         per_file_ignores=data.get("per_file_ignores", {}),
         severity_overrides=severity_overrides,
     )

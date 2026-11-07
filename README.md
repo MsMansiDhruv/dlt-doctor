@@ -27,13 +27,16 @@
 
 </div>
 
+> [!NOTE]
+> **Beta Release (v0.5.0)**: `dlt-doctor` is in active beta. Interfaces and CLI contracts may evolve prior to v1.0.0. Feedback and contributions are welcome via [GitHub Issues](https://github.com/MsMansiDhruv/dlt-doctor/issues) and [Discussions](https://github.com/MsMansiDhruv/dlt-doctor/discussions).
+
 ---
 
 ## The Story
 
 Every data engineer working on Databricks Lakeflow Spark Declarative Pipelines (formerly Delta Live Tables) knows the exact feeling:
 
-It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot perform Merge as multiple source rows matched`. Or worse: native DLT `expect_or_drop` silently purged 50,000 regulatory records, and nobody noticed until audit season. You spin up an interactive cluster to debug, burning DBUs while waiting 4 minutes for workers to allocate, only to discover that someone chained 8 `.withColumn()` calls and wrote a row-level Python `@udf` that disabled Whole-Stage CodeGen and created massive JVM-to-Python socket serialization.
+It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot perform Merge as multiple source rows matched`. Or worse: native DLT `expect_or_drop` dropped 50,000 regulatory records with no record-level trace, and nobody noticed until audit season. You spin up an interactive cluster to debug, burning DBUs while waiting 4 minutes for workers to allocate, only to discover that someone chained 8 `.withColumn()` calls and wrote a row-level Python `@udf` that disabled Whole-Stage CodeGen and created massive JVM-to-Python socket serialization.
 
 `dlt-doctor` is the antidote:
 - **Zero cluster spend**: Statically audits your PySpark AST and configurations locally or inside CI before code merges.
@@ -60,31 +63,12 @@ It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot
 
 ## Benchmarks
 
-<div align="center">
-
-<img src="./assets/dlt-doctor-benchmarks.svg" alt="dlt-doctor illustrative reference benchmarks" width="100%" />
-
-</div>
-
-> [!NOTE]
-> The production scenarios below are illustrative reference benchmarks of potential cluster improvements across 10M-record transactional pipelines on Databricks Runtime 15.4 LTS.
-
-| Production Scenario | Default Databricks Anti-Pattern | dlt-doctor Refactored | Illustrative Outcome |
-| :--- | :--- | :--- | :--- |
-| **Late Partition Backfill** | Full 365-day reload (2.4 TB scan) | Bounded 7-day partition-pruned `MERGE` | **98.1% I/O scan reduction** |
-| **Row Transformation** | Python `@udf` on socket IPC | Native `F.when` / Arrow `@pandas_udf` | **15.4x compute acceleration** |
-| **Fragmented Small Files** | 4,200 8MB files (34.2s scan) | Compacted 128MB files with Liquid Clustering | **18.8x faster table queries** |
-| **High-Cardinality Skew** | 45m single-task executor hang | AQE skew join + two-phase key salting | **14.1x faster wall-clock run** |
-| **DLT Rule Enforcement** | `expect_or_drop` silent deletion | Resilient dual-routing quarantine stream | **0 records lost (100% auditability)** |
-| **Streaming CDC Merges** | `DeltaAnalysisException` crash | In-batch window `row_number()` deduplication | **Zero merge crashes (deterministic)** |
-
 ### Static Analyzer Throughput (Locally Measured)
 
-Measured via `python benchmarks/run_benchmarks.py` with zero JVM cluster overhead:
+Measured on an AMD Ryzen 7 5800H (16 vCPUs, 3.2GHz, 16GB RAM) running Python 3.11 with zero JVM cluster overhead across 25 production-scale pipeline files:
 
 | Benchmark Task | Workload Scale | Measured Latency | Throughput |
 | :--- | :--- | :--- | :--- |
-| **Catalyst AST Audit** | 50 pipeline functions (250+ lines) | 3.1 ms | **~80,000 lines/sec** |
 | **Single-Pass Heal** | 10 DLT expectation tables | 4.2 ms | **Sub-5ms code synthesis** |
 | **Multi-File Directory Scan** | 25 pipeline source files | 35.9 ms | **~700 files/sec** |
 
@@ -94,11 +78,11 @@ Measured via `python benchmarks/run_benchmarks.py` with zero JVM cluster overhea
 
 | Architectural Dimension | Native Lakeflow / DLT | DQX / Great Expectations | Commercial SaaS (Monte Carlo / Anomalo) | dlt-doctor |
 | :--- | :--- | :--- | :--- | :--- |
-| **Cluster Cost** | Standard DLT compute | Executes assertions inside Spark tasks | Burns DBUs querying live tables post-run | **Zero cluster cost** (runs offline via AST in <5ms) |
+| **Cluster Cost** | Standard DLT compute | Executes assertions inside Spark tasks | Queries live tables post-run | **Zero cluster cost** (runs offline via AST in <5ms) |
 | **Data Loss Prevention** | `expect_or_drop` purges rows without persisting payloads | Supports quarantine routing in DQX (runtime compute); GE typically halts or warns | Read-only alerting after corruption lands | **Single-pass NULL-safe quarantine routing** |
 | **Actionability** | Log metrics to event log | Assertion logs | Slack / PagerDuty alert notifications | **Automated code synthesis (`dlt-doctor heal`)** |
 | **Code Inspection** | None (runtime engine) | Runtime dataframe assertions | Black-box table polling | **Deep AST inspection (UDFs, cascades, spills)** |
-| **Late Data Backfills** | Full pipeline refresh | None | Alerts on freshness lag | **Partition blast-radius restatement SQL** |
+| **Late Data Backfills** | Full pipeline backfill | None | Alerts on freshness lag | **Partition blast-radius restatement SQL** |
 | **Licensing** | Databricks runtime license | Open Source library | Commercial proprietary license | **100% Free & Open Source (Apache 2.0)** |
 
 ---
@@ -172,7 +156,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run dlt-doctor Quality Audit
-        uses: MsMansiDhruv/dlt-doctor@main
+        uses: MsMansiDhruv/dlt-doctor@v0.5.0
         with:
           path: "src/pipelines"
           format: "text"
@@ -209,7 +193,7 @@ dlt-doctor restate --table main.gold.orders --late-date 2026-10-25 --window 7 --
 dlt-doctor cdc --table main.silver.customers --keys customer_id --event-time updated_at
 
 # Generate idempotent replay SQL to reprocess quarantined records
-dlt-doctor replay --quarantine-table main.silver.orders_quarantine --target-table main.silver.orders --keys order_id
+dlt-doctor replay --quarantine-table main.silver.orders_quarantine --target-table main.silver.orders --keys order_id --allow-resurrection
 
 # Audit legacy DBFS mounts and two-tier Hive Metastore references for Unity Catalog
 dlt-doctor uc-migrate src/pipelines/orders.py --catalog prod_lakehouse --schema bronze
@@ -230,13 +214,21 @@ Audit PySpark code interactively inside Databricks or Jupyter notebook cells bef
 %load_ext dlt_doctor
 
 %%dlt_doctor
-# Audits cell Catalyst AST and renders a native displayHTML scorecard
-df_clean = (
+# Audits cell Catalyst AST and flags anti-patterns before cluster execution
+from pyspark.sql import functions as F
+from pyspark.sql.functions import udf
+
+@udf
+def parse_status(x):
+    return x.lower() if x else "unknown"
+
+df_orders = (
     spark.readStream.table("bronze_orders")
-    .withColumns({
-        "quantity_clean": F.expr("try_cast(quantity AS INT)"),
-        "unit_price_clean": F.expr("try_cast(unit_price AS DECIMAL(18,2))"),
-    })
+    .withColumn("c1", F.col("id"))
+    .withColumn("c2", F.col("ts"))
+    .withColumn("c3", F.col("amt"))
+    .withColumn("c4", F.col("code"))
+    .withColumn("status_clean", parse_status(F.col("status")))
 )
 ```
 
@@ -254,10 +246,19 @@ from dlt_doctor import PlanDoctor, AdvisorDoctor, AutoLoaderDoctor
 # 1. Statically audit PySpark code for chained withColumn calls and row-level UDFs
 doctor = PlanDoctor()
 findings = doctor.analyze_source_code("""
+from pyspark.sql import functions as F
+from pyspark.sql.functions import udf
+
+@udf
+def clean_it(x):
+    return x.strip() if x else None
+
 df_clean = (
     df.withColumn("c1", F.col("a"))
       .withColumn("c2", F.col("b"))
-      .withColumn("clean_val", my_python_udf(F.col("raw")))
+      .withColumn("c3", F.col("c"))
+      .withColumn("c4", F.col("d"))
+      .withColumn("clean_val", clean_it(F.col("raw")))
       .repartition(4)
 )
 """)
@@ -364,14 +365,36 @@ if vac_report.safety_level.value != "DANGEROUS":
 
 ## Verification & Test Suite
 
-The test suite validates all 11 diagnostic engines across Python 3.10, 3.11, and 3.12 with zero external cluster dependencies:
+The test suite validates all diagnostic engines and integration components across Python 3.10, 3.11, 3.12, and 3.13:
 
 ```bash
-pytest -v
-# 63 passed in 0.17s
+# Fast unit test suite (zero external cluster dependencies)
+pytest -m "not integration"
+# 197 passed in 0.52s
+
+# Integration test suite (executed on local PySpark + Delta Lake)
+REQUIRE_SPARK=1 pytest -m integration -rs -v
+# 12 passed (executed Delta MERGE, SCD1/SCD2 CDC microbatches, and expectation pipelines)
 ```
 
-All source code is audited with `ruff` and verified against security vulnerabilities with `bandit -r src`.
+All source code is audited with `ruff check src tests`, type-checked with `mypy src`, and verified against security vulnerabilities with `bandit -r src`.
+
+For environment setup (including Windows `JAVA_HOME` and Hadoop binaries) and contributor guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Limitations & Operational Boundaries
+
+- **Static AST Analysis**: Static analysis inspects source AST without cluster execution. Dynamic constructs (e.g. `eval()`, runtime-generated expectation dicts, or dynamic SQL queries) cannot be resolved statically (emits `DD003` INFO).
+- **SQL Pipeline Auto-Heal**: `dlt-doctor heal` synthesizes Python AST definitions. SQL pipelines using `ON VIOLATION DROP ROW` must be manually migrated to dual-table quarantine structures.
+- **Derived Non-Deterministic Rules**: Expectation conditions referencing runtime boundary calls (such as `current_date()`) emit a warning (`UserWarning`) because records evaluated near midnight boundaries may evaluate differently upon replay.
+- **Configuration**: Audits and CI gates can be customized using `pyproject.toml` or `dlt-doctor.toml`. For complete options, see the [Configuration Guide](docs/configuration.md) and [Limitations Guide](docs/limitations.md).
+
+---
+
+## Disclaimers
+
+`dlt-doctor` is an independent open-source project and is not affiliated with, sponsored by, or endorsed by Databricks, Inc. Apache Spark, Delta Lake, and Databricks are trademarks of their respective owners. Use of `dlt-doctor` does not guarantee regulatory compliance (such as GDPR, CCPA, or HIPAA); data engineering teams remain responsible for their own retention, masking, and governance policies.
 
 ---
 

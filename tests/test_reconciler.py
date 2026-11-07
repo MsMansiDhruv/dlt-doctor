@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import sqlglot
 
@@ -170,33 +172,26 @@ def test_advise_liquid_clustering() -> None:
 
 
 @pytest.mark.integration
-def test_execute_restate_merge_on_pyspark() -> None:
+def test_execute_restate_merge_on_pyspark(spark: Any) -> None:
     """Execute restatement MERGE on local PySpark Delta table."""
-    try:
-        from pyspark.sql import SparkSession
-    except ImportError:
-        pytest.skip("PySpark not installed")
+    import shutil
+    import tempfile
+
+    tmp_tgt = tempfile.mkdtemp().replace("\\", "/")
+    tmp_src = tempfile.mkdtemp().replace("\\", "/")
 
     try:
-        spark = (
-            SparkSession.builder.master("local[1]")
-            .appName("RestateTest")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config(
-                "spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog"
-            )
-            .getOrCreate()
-        )
-    except Exception as exc:
-        pytest.skip(f"Local PySpark/JVM not available: {exc}")
+        spark.sql("DROP TABLE IF EXISTS default.restate_tgt")
+        spark.sql("DROP TABLE IF EXISTS default.source_recalc")
 
-    try:
-        spark.sql(
-            "CREATE TABLE IF NOT EXISTS default.restate_tgt (id INT, order_date DATE, amt DOUBLE) USING DELTA"
-        )
-        spark.sql(
-            "CREATE TABLE IF NOT EXISTS default.source_recalc (id INT, order_date DATE, amt DOUBLE) USING DELTA"
-        )
+        spark.sql(f"""
+            CREATE TABLE default.restate_tgt (id INT, order_date DATE, amt DOUBLE)
+            USING DELTA LOCATION '{tmp_tgt}'
+        """)
+        spark.sql(f"""
+            CREATE TABLE default.source_recalc (id INT, order_date DATE, amt DOUBLE)
+            USING DELTA LOCATION '{tmp_src}'
+        """)
         doctor = RestatementDoctor()
         scope = doctor.calculate_blast_radius(
             target_table="default.restate_tgt",
@@ -209,4 +204,7 @@ def test_execute_restate_merge_on_pyspark() -> None:
         )
         spark.sql(scope.delta_merge_sql)
     finally:
-        spark.stop()
+        spark.sql("DROP TABLE IF EXISTS default.restate_tgt")
+        spark.sql("DROP TABLE IF EXISTS default.source_recalc")
+        shutil.rmtree(tmp_tgt, ignore_errors=True)
+        shutil.rmtree(tmp_src, ignore_errors=True)
