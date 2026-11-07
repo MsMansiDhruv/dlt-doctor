@@ -42,6 +42,7 @@ def generate_replay_sql(
     mark_replayed: bool = False,
     valid_filter_sql: str | None = None,
     allow_unvalidated: bool = False,
+    erasure_table: str | None = None,
 ) -> str:
     """Generate idempotent Delta MERGE SQL to reprocess quarantined records.
 
@@ -63,10 +64,24 @@ def generate_replay_sql(
     An UPDATE clause is only emitted when recency_col is explicitly provided to guard
     against regressions.
 
-    Deduplication Ordering:
-    Deduplication (QUALIFY row_number OVER (PARTITION BY ... ORDER BY _quarantined_at DESC) = 1)
-    runs before the validity filter so that if a key's latest version remains invalid, an older
-    passing version for that key is not replayed.
+    Deduplication Ordering & Post-Dedupe Filtering:
+    Deduplication (`QUALIFY row_number() OVER (PARTITION BY ... ORDER BY _quarantined_at DESC) = 1`)
+    operates over the time-windowed quarantine candidate set (`start_time` and `end_time`).
+    Crucially, `rule_name`, `partition_val`, and `valid_filter_sql` are applied AFTER
+    the latest-per-key deduplication. This guarantees that if a key's latest quarantined state
+    failed a different rule or was moved to a different partition, an older, stale failure for
+    that key is not mistakenly replayed.
+
+    Resurrection Risk & Erasure Guards:
+    Quarantined tables may contain records whose corresponding primary keys were subsequently
+    deleted or erased from the target table for retention, right-to-be-forgotten (GDPR/CCPA),
+    or operational reasons. Because Delta MERGE executes `WHEN NOT MATCHED THEN INSERT *`,
+    replaying records whose keys no longer exist in target will resurrect those erased records.
+    To prevent accidental resurrection:
+    1. Pass `erasure_table='<audit_or_tombstones_table>'` to automatically append an anti-join
+       guard (`NOT EXISTS (SELECT 1 FROM <erasure_table> WHERE ...)`) before replay insertion.
+    2. Alternatively, ensure quarantine tables are purged or soft-deleted when upstream
+       erasure / tombstone events occur.
 
     Schema Requirement for mark_replayed:
     Setting `mark_replayed=True` injects `current_timestamp() AS _replayed_at` into the source.
@@ -86,6 +101,7 @@ def generate_replay_sql(
     clean_target = _validate_identifier(target_table)
     clean_keys = [_validate_identifier(k) for k in primary_keys]
     clean_part = _validate_identifier(partition_col) if partition_col else None
+    clean_erasure = _validate_identifier(erasure_table) if erasure_table else None
 
     formatted_val = ""
     if partition_val is not None:
@@ -101,22 +117,24 @@ def generate_replay_sql(
             escaped_val = str(partition_val).replace("'", "''")
             formatted_val = f"'{escaped_val}'"
 
-    base_conditions: list[str] = []
-    if rule_name:
-        escaped_rule = rule_name.replace("'", "''")
-        base_conditions.append(f"_failed_rules = array('{escaped_rule}')")
+    # Ingestion candidate window filters applied BEFORE deduplication
+    window_conditions: list[str] = []
     if start_time:
         valid_start = _validate_iso_timestamp(start_time, "start_time")
-        base_conditions.append(f"_quarantined_at >= '{valid_start}'")
+        window_conditions.append(f"_quarantined_at >= '{valid_start}'")
     if end_time:
         valid_end = _validate_iso_timestamp(end_time, "end_time")
-        base_conditions.append(f"_quarantined_at <= '{valid_end}'")
+        window_conditions.append(f"_quarantined_at <= '{valid_end}'")
+
+    window_where_clause = f" WHERE {' AND '.join(window_conditions)}" if window_conditions else ""
+
+    # Filters applied AFTER latest-per-key deduplication to prevent picking older stale failures
+    post_dedup_conditions: list[str] = []
+    if rule_name:
+        escaped_rule = rule_name.replace("'", "''")
+        post_dedup_conditions.append(f"_failed_rules = array('{escaped_rule}')")
     if clean_part and partition_val is not None:
-        base_conditions.append(f"{clean_part} = {formatted_val}")
-
-    base_where_clause = f" WHERE {' AND '.join(base_conditions)}" if base_conditions else ""
-
-    valid_filter_where = ""
+        post_dedup_conditions.append(f"{clean_part} = {formatted_val}")
     if valid_filter_sql:
         try:
             parsed_vf = sqlglot.parse(valid_filter_sql, read="spark")
@@ -126,7 +144,19 @@ def generate_replay_sql(
             raise ValueError(
                 f"Failed to parse valid_filter_sql '{valid_filter_sql}': {exc}"
             ) from exc
-        valid_filter_where = f"\n    WHERE ({valid_filter_sql.strip()})"
+        post_dedup_conditions.append(f"({valid_filter_sql.strip()})")
+    if clean_erasure:
+        erased_predicates = [f"erased.{k} = deduped.{k}" for k in clean_keys]
+        if clean_part:
+            erased_predicates.append(f"erased.{clean_part} = deduped.{clean_part}")
+        erased_join = " AND ".join(erased_predicates)
+        post_dedup_conditions.append(
+            f"NOT EXISTS (SELECT 1 FROM {clean_erasure} AS erased WHERE {erased_join})"
+        )
+
+    post_dedup_where = (
+        f"\n    WHERE {' AND '.join(post_dedup_conditions)}" if post_dedup_conditions else ""
+    )
 
     join_predicates = [f"target.{k} = source.{k}" for k in clean_keys]
     if clean_part:
@@ -159,13 +189,12 @@ def generate_replay_sql(
         f"    SELECT {select_clause}",
         "    FROM (",
         "        SELECT *",
-        f"        FROM {clean_quarantine}{base_where_clause}",
+        f"        FROM {clean_quarantine}{window_where_clause}",
         f"        QUALIFY row_number() OVER (PARTITION BY {dedupe_partition_cols} ORDER BY _quarantined_at DESC) = 1",
-        f"    ) AS deduped{valid_filter_where}",
+        f"    ) AS deduped{post_dedup_where}",
         ") AS source",
         f"ON {pk_join}",
         *matched_clauses,
         "WHEN NOT MATCHED THEN INSERT *;",
     ]
-    return "\n".join(lines)
     return "\n".join(lines)

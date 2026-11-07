@@ -67,6 +67,11 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default=False,
         help="Explicitly permit replay without a revalidation filter",
     )
+    p.add_argument(
+        "--erasure-table",
+        default=None,
+        help="Optional table of erased/tombstoned primary keys to guard against resurrection",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -84,6 +89,7 @@ def handle(args: argparse.Namespace) -> int:
             mark_replayed=args.mark_replayed,
             valid_filter_sql=args.valid_filter,
             allow_unvalidated=args.allow_unvalidated,
+            erasure_table=getattr(args, "erasure_table", None),
         )
     except ValueError as exc:
         import sys
