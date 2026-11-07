@@ -103,7 +103,33 @@ def test_generate_replay_sql_recency_guard() -> None:
     )
     parsed = sqlglot.parse_one(sql, read="spark")
     assert parsed is not None
-    assert "target.updated_at IS NULL OR source.updated_at >= target.updated_at" in sql
+    assert (
+        "WHEN MATCHED AND (target.updated_at IS NULL OR source.updated_at >= target.updated_at) THEN UPDATE SET *"
+        in sql
+    )
+
+
+def test_replay_defaults_to_insert_only_without_recency_col() -> None:
+    """When recency_col is None, replay MERGE must be insert-only with no WHEN MATCHED clause."""
+    sql = generate_replay_sql(
+        quarantine_table="bronze_quarantine",
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        allow_unvalidated=True,
+    )
+    assert "WHEN MATCHED" not in sql
+    assert "WHEN NOT MATCHED THEN INSERT *;" in sql
+
+
+def test_replay_dedupes_latest_per_key_before_valid_filter_sql() -> None:
+    """Validity filter must run on the deduplicated latest-per-key row, not prior to deduplication."""
+    sql = generate_replay_sql(
+        quarantine_table="bronze_quarantine",
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        valid_filter_sql="amount > 0",
+    )
+    assert ") AS deduped\n    WHERE (amount > 0)" in sql
 
 
 def test_generate_replay_sql_marks_replayed_rows() -> None:
@@ -276,5 +302,72 @@ def test_execute_replay_sql_on_pyspark(spark: Any) -> None:
     finally:
         spark.sql("DROP TABLE IF EXISTS default.test_replay_target")
         spark.sql("DROP TABLE IF EXISTS default.test_replay_quarantine")
+        shutil.rmtree(tmp_tgt, ignore_errors=True)
+        shutil.rmtree(tmp_q, ignore_errors=True)
+
+
+@pytest.mark.integration
+def test_execute_replay_with_mark_replayed_on_pyspark(spark: Any) -> None:
+    """Execute replay with mark_replayed=True into a Delta table containing _replayed_at."""
+    import shutil
+    import tempfile
+
+    tmp_tgt = tempfile.mkdtemp().replace("\\", "/")
+    tmp_q = tempfile.mkdtemp().replace("\\", "/")
+
+    try:
+        spark.sql("DROP TABLE IF EXISTS default.test_replay_marked_tgt")
+        spark.sql("DROP TABLE IF EXISTS default.test_replay_marked_q")
+
+        spark.sql(f"""
+            CREATE TABLE default.test_replay_marked_tgt (
+                id INT,
+                amt DOUBLE,
+                updated_at STRING,
+                _replayed_at TIMESTAMP
+            ) USING DELTA LOCATION '{tmp_tgt}'
+        """)
+
+        spark.sql(f"""
+            CREATE TABLE default.test_replay_marked_q (
+                id INT,
+                amt DOUBLE,
+                updated_at STRING,
+                _failed_rules ARRAY<STRING>,
+                _quarantined_at STRING
+            ) USING DELTA LOCATION '{tmp_q}'
+        """)
+
+        # Add quarantined rows for id=10 (valid now) and id=20 (older valid at 10:00, but latest at 12:00 is invalid amt=-50)
+        spark.sql("""
+            INSERT INTO default.test_replay_marked_q VALUES
+            (10, 100.0, '2026-01-01 10:00:00', array('bad_amt'), '2026-01-01 10:00:00'),
+            (20, 50.0, '2026-01-01 10:00:00', array('bad_amt'), '2026-01-01 10:00:00'),
+            (20, -50.0, '2026-01-01 12:00:00', array('bad_amt'), '2026-01-01 12:00:00')
+        """)
+
+        sql = generate_replay_sql(
+            quarantine_table="default.test_replay_marked_q",
+            target_table="default.test_replay_marked_tgt",
+            primary_keys=["id"],
+            recency_col="updated_at",
+            mark_replayed=True,
+            valid_filter_sql="amt > 0",
+        )
+
+        spark.sql(sql)
+
+        target_rows = spark.sql(
+            "SELECT id, amt, _replayed_at FROM default.test_replay_marked_tgt"
+        ).collect()
+        # id=10 was inserted and has non-null _replayed_at
+        # id=20 was NOT inserted because its latest quarantined state was amt=-50 (failed valid_filter_sql)
+        assert len(target_rows) == 1
+        assert target_rows[0].id == 10
+        assert target_rows[0].amt == 100.0
+        assert target_rows[0]._replayed_at is not None
+    finally:
+        spark.sql("DROP TABLE IF EXISTS default.test_replay_marked_tgt")
+        spark.sql("DROP TABLE IF EXISTS default.test_replay_marked_q")
         shutil.rmtree(tmp_tgt, ignore_errors=True)
         shutil.rmtree(tmp_q, ignore_errors=True)
