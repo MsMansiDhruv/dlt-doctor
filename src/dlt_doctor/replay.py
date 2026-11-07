@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
+
+import sqlglot
 
 IDENTIFIER_PATTERN = re.compile(
     r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$|^`[a-zA-Z0-9_\.]+`$"
@@ -37,6 +40,8 @@ def generate_replay_sql(
     partition_col: str | None = None,
     partition_val: str | int | float | bool | None = None,
     mark_replayed: bool = False,
+    valid_filter_sql: str | None = None,
+    allow_unvalidated: bool = False,
 ) -> str:
     """Generate idempotent Delta MERGE SQL to reprocess quarantined records.
 
@@ -52,6 +57,12 @@ def generate_replay_sql(
     landing area) with updated sequence/watermark values so the pipeline processes them
     natively through its standard lineage.
     """
+    if not valid_filter_sql and not allow_unvalidated:
+        raise ValueError(
+            "Replay requires either a revalidation condition ('valid_filter_sql') or explicit "
+            "confirmation ('allow_unvalidated=True') to prevent re-injecting unvalidated data."
+        )
+
     if partition_val is not None and not partition_col:
         raise ValueError("partition_val requires partition_col to be specified.")
 
@@ -65,6 +76,10 @@ def generate_replay_sql(
         if isinstance(partition_val, bool):
             formatted_val = "true" if partition_val else "false"
         elif isinstance(partition_val, (int, float)):
+            if isinstance(partition_val, float) and (
+                math.isnan(partition_val) or math.isinf(partition_val)
+            ):
+                raise ValueError(f"partition_val must be a finite number, got {partition_val}.")
             formatted_val = str(partition_val)
         else:
             escaped_val = str(partition_val).replace("'", "''")
@@ -73,7 +88,7 @@ def generate_replay_sql(
     conditions: list[str] = []
     if rule_name:
         escaped_rule = rule_name.replace("'", "''")
-        conditions.append(f"array_contains(_failed_rules, '{escaped_rule}')")
+        conditions.append(f"_failed_rules = array('{escaped_rule}')")
     if start_time:
         valid_start = _validate_iso_timestamp(start_time, "start_time")
         conditions.append(f"_quarantined_at >= '{valid_start}'")
@@ -82,6 +97,16 @@ def generate_replay_sql(
         conditions.append(f"_quarantined_at <= '{valid_end}'")
     if clean_part and partition_val is not None:
         conditions.append(f"{clean_part} = {formatted_val}")
+    if valid_filter_sql:
+        try:
+            parsed_vf = sqlglot.parse(valid_filter_sql, read="spark")
+            if len(parsed_vf) != 1 or parsed_vf[0] is None:
+                raise ValueError("valid_filter_sql must be a single SQL expression.")
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to parse valid_filter_sql '{valid_filter_sql}': {exc}"
+            ) from exc
+        conditions.append(f"({valid_filter_sql.strip()})")
 
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     join_predicates = [f"target.{k} = source.{k}" for k in clean_keys]
@@ -90,7 +115,11 @@ def generate_replay_sql(
         if partition_val is not None:
             join_predicates.append(f"target.{clean_part} = {formatted_val}")
     pk_join = " AND ".join(join_predicates)
-    partition_cols = ", ".join(clean_keys)
+
+    if clean_part and clean_part not in clean_keys:
+        dedupe_partition_cols = f"{', '.join(clean_keys)}, {clean_part}"
+    else:
+        dedupe_partition_cols = ", ".join(clean_keys)
 
     recency_guard = ""
     if recency_col:
@@ -99,7 +128,7 @@ def generate_replay_sql(
 
     select_clause = "* EXCEPT (_failed_rules, _quarantined_at)"
     if mark_replayed:
-        select_clause += ",\n           current_timestamp() AS _replayed_at"
+        select_clause += ",\n               current_timestamp() AS _replayed_at"
 
     lines = [
         "-- Replay SQL: Reprocess quarantined records into target table idempotently",
@@ -107,8 +136,11 @@ def generate_replay_sql(
         f"MERGE INTO {clean_target} AS target",
         "USING (",
         f"    SELECT {select_clause}",
-        f"    FROM {clean_quarantine}{where_clause}",
-        f"    QUALIFY row_number() OVER (PARTITION BY {partition_cols} ORDER BY _quarantined_at DESC) = 1",
+        "    FROM (",
+        "        SELECT *",
+        f"        FROM {clean_quarantine}{where_clause}",
+        f"        QUALIFY row_number() OVER (PARTITION BY {dedupe_partition_cols} ORDER BY _quarantined_at DESC) = 1",
+        "    ) AS deduped",
         ") AS source",
         f"ON {pk_join}",
         f"WHEN MATCHED{recency_guard} THEN UPDATE SET *",  # nosec B608

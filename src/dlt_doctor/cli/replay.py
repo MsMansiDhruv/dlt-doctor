@@ -54,6 +54,19 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Partition value to filter in quarantine and target",
     )
+    p.add_argument(
+        "--valid-filter",
+        "--valid-filter-sql",
+        dest="valid_filter",
+        default=None,
+        help="SQL condition to revalidate rows before replaying",
+    )
+    p.add_argument(
+        "--allow-unvalidated",
+        action="store_true",
+        default=False,
+        help="Explicitly permit replay without a revalidation filter",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -69,6 +82,8 @@ def handle(args: argparse.Namespace) -> int:
             partition_col=args.partition_col,
             partition_val=args.partition_val,
             mark_replayed=args.mark_replayed,
+            valid_filter_sql=args.valid_filter,
+            allow_unvalidated=args.allow_unvalidated,
         )
     except ValueError as exc:
         import sys
