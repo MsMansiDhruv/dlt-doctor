@@ -530,12 +530,11 @@ def tbl():
 
 
 def test_auto_heal_refuses_stateful_streaming_calls() -> None:
-    """DataFrame stateful operations like groupBy, dropDuplicates, withWatermark, or stream joins must be refused."""
+    """DataFrame stateful streaming operations like groupBy, dropDuplicates, withWatermark, or stream-stream joins must be refused."""
     for method in [
         "groupBy('cat')",
         "dropDuplicates()",
         "withWatermark('ts', '1 hour')",
-        "join(other)",
     ]:
         source = f"""import dlt
 
@@ -548,6 +547,75 @@ def tbl():
         result = auto_heal_source(source)
         assert result.can_heal is False
         assert "stateful streaming operation" in result.reason
+
+    # Stream-stream join (reading 2 streams and joining them) must be refused
+    stream_stream_source = """import dlt
+
+@dlt.table
+@dlt.expect_or_drop("v", "x > 0")
+def tbl():
+    s1 = dlt.read_stream("stream_a")
+    s2 = dlt.read_stream("stream_b")
+    return s1.join(s2, "id")
+"""
+    result = auto_heal_source(stream_stream_source)
+    assert result.can_heal is False
+    assert "stateful stream-stream join" in result.reason
+
+
+def test_auto_heal_allows_string_join_and_stream_static_join_and_batch_stateful() -> None:
+    """String joins like ', '.join(cols), stream-static joins, datetime.now(), and batch stateful operations must be allowed."""
+    # 1. str.join in a streaming function
+    str_join_source = """import dlt
+
+@dlt.table
+@dlt.expect_or_drop("v", "x > 0")
+def tbl():
+    cols = ["col_a", "col_b"]
+    joined_name = ", ".join(cols)
+    return dlt.read_stream("raw")
+"""
+    result = auto_heal_source(str_join_source)
+    assert result.can_heal is True
+
+    # 2. Stream-static join (1 stream + 1 static table)
+    stream_static_source = """import dlt
+
+@dlt.table
+@dlt.expect_or_drop("v", "x > 0")
+def tbl():
+    stream_df = dlt.read_stream("events")
+    static_df = dlt.read("dim_users")
+    return stream_df.join(static_df, "user_id")
+"""
+    result = auto_heal_source(stream_static_source)
+    assert result.can_heal is True
+
+    # 3. Batch table with groupBy, agg, and join
+    batch_source = """import dlt
+
+@dlt.table
+@dlt.expect_or_drop("v", "x > 0")
+def tbl():
+    df1 = dlt.read("batch_orders")
+    df2 = dlt.read("dim_customers")
+    return df1.join(df2, "cust_id").groupBy("cust_id").agg({"amt": "sum"})
+"""
+    result = auto_heal_source(batch_source)
+    assert result.can_heal is True
+
+    # 4. datetime.now() in body
+    datetime_source = """import dlt
+from datetime import datetime
+
+@dlt.table
+@dlt.expect_or_drop("v", "x > 0")
+def tbl():
+    ts = datetime.now()
+    return dlt.read_stream("raw")
+"""
+    result = auto_heal_source(datetime_source)
+    assert result.can_heal is True
 
 
 def test_auto_heal_catches_invalid_rule_syntax() -> None:

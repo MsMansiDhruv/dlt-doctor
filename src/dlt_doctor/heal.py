@@ -34,13 +34,9 @@ NONDETERMINISTIC_FUNCS = {
     "rand",
     "randn",
     "uuid",
-    "current_timestamp",
-    "current_date",
-    "monotonically_increasing_id",
-    "now",
-    "unix_timestamp",
+    "random",
 }
-STATEFUL_METHODS = {
+STATEFUL_STREAMING_METHODS = {
     "groupby",
     "group_by",
     "agg",
@@ -49,7 +45,6 @@ STATEFUL_METHODS = {
     "drop_duplicates",
     "withwatermark",
     "with_watermark",
-    "join",
 }
 SQL_NONDETERMINISTIC_FUNCS = {
     "current_timestamp",
@@ -64,7 +59,37 @@ SQL_NONDETERMINISTIC_FUNCS = {
 }
 
 
-def _has_stateful_or_nondet_calls(func_node: ast.FunctionDef) -> tuple[bool, str]:
+def _is_str_join(node: ast.Call) -> bool:
+    """Check if an ast.Call is a string join call (e.g. ', '.join(cols))."""
+    if not (isinstance(node.func, ast.Attribute) and node.func.attr.lower() == "join"):
+        return False
+    # Receiver is a string literal (e.g. ", ".join(...))
+    if isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str):
+        return True
+    # Receiver is an f-string or string formatting
+    if isinstance(node.func.value, ast.JoinedStr):
+        return True
+    # Single argument is a list/tuple/set literal, e.g. sep.join(['a', 'b'])
+    return len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple, ast.Set))
+
+
+def _count_stream_reads(func_node: ast.FunctionDef) -> int:
+    count = 0
+    for node in ast.walk(func_node):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"readStream", "read_stream"}
+        ):
+            count += 1
+    return count
+
+
+def _has_stateful_or_nondet_calls(
+    func_node: ast.FunctionDef, is_streaming: bool
+) -> tuple[bool, str]:
+    num_streams = _count_stream_reads(func_node) if is_streaming else 0
+
     for node in ast.walk(func_node):
         if isinstance(node, ast.Call):
             func_name = ""
@@ -75,8 +100,15 @@ def _has_stateful_or_nondet_calls(func_node: ast.FunctionDef) -> tuple[bool, str
             name_lower = func_name.lower()
             if name_lower in NONDETERMINISTIC_FUNCS:
                 return True, f"non-deterministic call '{func_name}'"
-            if name_lower in STATEFUL_METHODS:
-                return True, f"stateful streaming operation '{func_name}'"
+            if is_streaming:
+                if name_lower in STATEFUL_STREAMING_METHODS:
+                    return True, f"stateful streaming operation '{func_name}'"
+                if name_lower == "join":
+                    if _is_str_join(node):
+                        continue
+                    # Stream-stream joins (2+ streams) are stateful; stream-static joins (1 stream) are allowed
+                    if num_streams > 1:
+                        return True, f"stateful stream-stream join '{func_name}'"
     return False, ""
 
 
@@ -191,7 +223,10 @@ def auto_heal_source(
                 ),
             )
 
-        is_bad, bad_reason = _has_stateful_or_nondet_calls(func)
+        # Detect streaming vs batch
+        is_streaming = _detect_is_streaming(func)
+
+        is_bad, bad_reason = _has_stateful_or_nondet_calls(func, is_streaming=is_streaming)
         if is_bad:
             return HealResult(
                 original_code=source_code,
@@ -361,9 +396,6 @@ def auto_heal_source(
                         f"'{cand}' collides with an existing definition in the file."
                     ),
                 )
-
-        # Detect streaming vs batch
-        is_streaming = _detect_is_streaming(func)
 
         # Partition decorators
         non_drop_expect_decs = [
