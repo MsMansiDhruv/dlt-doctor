@@ -92,14 +92,14 @@ def load_config(root_path: Path | str | None = None) -> DoctorConfig:
         if cfg_file.exists():
             try:
                 data = tomllib.loads(cfg_file.read_text(encoding="utf-8"))
-                section: dict[str, Any] = {}
+                cfg_section: dict[str, Any] = {}
                 if "tool" in data and "dlt-doctor" in data["tool"]:
-                    section = data["tool"]["dlt-doctor"]
+                    cfg_section = data["tool"]["dlt-doctor"]
                 elif "dlt-doctor" in data:
-                    section = data["dlt-doctor"]
+                    cfg_section = data["dlt-doctor"]
 
-                if section:
-                    return _parse_config_dict(section)
+                if cfg_section:
+                    return _parse_config_dict(cfg_section)
             except (tomllib.TOMLDecodeError, OSError):
                 return DoctorConfig()
 

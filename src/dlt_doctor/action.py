@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 from typing import Any
@@ -192,7 +192,7 @@ def run_action() -> int:
     if config:
         cmd.extend(["--config", config])
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # nosec B603
     if proc.returncode != 0 and not proc.stdout:
         sys.stderr.write(proc.stderr)
         return proc.returncode
