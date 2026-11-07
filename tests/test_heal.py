@@ -538,6 +538,46 @@ def tbl():
     assert result.can_heal is False
     assert "current_timestamp" in result.reason
 
+    # Dictionary format with non-deterministic function
+    dict_source = """import dlt
+
+@dlt.table
+@dlt.expect_all_or_drop({"valid_rand": "val > rand()"})
+def tbl():
+    return dlt.read_stream("raw")
+"""
+    dict_res = auto_heal_source(dict_source)
+    assert dict_res.can_heal is False
+    assert "rand" in dict_res.reason
+
+
+def test_auto_heal_allows_current_date_with_warning() -> None:
+    """Rules with current_date() (e.g. Databricks docs example date <= current_date()) are permitted with a warning."""
+    source = """import dlt
+
+@dlt.table
+@dlt.expect_or_drop("valid_date", "event_date <= current_date()")
+def tbl():
+    return dlt.read_stream("raw")
+"""
+    with pytest.warns(UserWarning, match="current_date"):
+        result = auto_heal_source(source)
+    assert result.can_heal is True
+    assert "tbl_quarantine" in result.healed_code
+
+    # Also test dict format
+    dict_source = """import dlt
+
+@dlt.table
+@dlt.expect_all_or_drop({"valid_date": "event_date <= current_date()"})
+def tbl():
+    return dlt.read_stream("raw")
+"""
+    with pytest.warns(UserWarning, match="current_date"):
+        dict_res = auto_heal_source(dict_source)
+    assert dict_res.can_heal is True
+    assert "tbl_quarantine" in dict_res.healed_code
+
 
 def test_auto_heal_refuses_stateful_streaming_calls() -> None:
     """DataFrame stateful streaming operations like groupBy, dropDuplicates, withWatermark, or stream-stream joins must be refused."""

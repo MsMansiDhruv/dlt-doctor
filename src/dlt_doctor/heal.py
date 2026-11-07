@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import difflib
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,7 +49,6 @@ STATEFUL_STREAMING_METHODS = {
 }
 SQL_NONDETERMINISTIC_FUNCS = {
     "current_timestamp",
-    "current_date",
     "now",
     "rand",
     "randn",
@@ -56,6 +56,9 @@ SQL_NONDETERMINISTIC_FUNCS = {
     "monotonically_increasing_id",
     "unix_timestamp",
     "current_timezone",
+}
+SQL_TEMPORAL_WARN_FUNCS = {
+    "current_date",
 }
 
 
@@ -112,11 +115,14 @@ def _has_stateful_or_nondet_calls(
     return False, ""
 
 
-def _has_nondeterministic_sql(condition_sql: str) -> str | None:
+def _check_sql_determinism(condition_sql: str) -> tuple[str | None, str | None]:
+    """Check SQL condition for non-deterministic functions (refused) or temporal boundary functions (warned)."""
     try:
         parsed = sqlglot.parse(condition_sql, read="spark")
     except Exception:
-        return None
+        return None, None
+    refusal_fn: str | None = None
+    warn_fn: str | None = None
     for stmt in parsed:
         if stmt is None:
             continue
@@ -127,14 +133,29 @@ def _has_nondeterministic_sql(condition_sql: str) -> str | None:
             elif isinstance(node, exp.Anonymous):
                 name = node.this.lower()
             if name in SQL_NONDETERMINISTIC_FUNCS:
-                return name
-    return None
+                refusal_fn = name
+                return refusal_fn, warn_fn
+            if name in SQL_TEMPORAL_WARN_FUNCS and not warn_fn:
+                warn_fn = name
+    return refusal_fn, warn_fn
 
 
 def auto_heal_source(
     source_code: str, file_path: str = "pipeline.py", quarantine_suffix: str = "_quarantine"
 ) -> HealResult:
-    """Analyze source code and synthesize single-pass quarantine tables for expect_or_drop."""
+    """Analyze source code and synthesize single-pass quarantine tables for expect_or_drop.
+
+    Known Limitations & Derived Non-Deterministic Columns:
+    Pipelines that derive columns using `current_timestamp()`, `unix_timestamp()`, or
+    `monotonically_increasing_id()` inside Python DataFrame transformations (e.g.
+    `df.withColumn('ingested_at', current_timestamp())`) are not refused because those
+    operations are deterministic per microbatch execution. However, if an expectation
+    rule subsequently evaluates a condition on such a derived column (e.g.
+    `ingested_at >= current_date()`), the expectation outcome depends on when the
+    pipeline or replay is executed. Static analysis validates SQL expression ASTs
+    directly in expectation decorators, but cannot trace arbitrary cross-DataFrame
+    column lineage back to dynamic timestamp generators.
+    """
     if not SUFFIX_PATTERN.match(quarantine_suffix):
         raise ValueError(
             f"Invalid quarantine_suffix '{quarantine_suffix}'. Must match ^[A-Za-z0-9_]+$."
@@ -298,8 +319,8 @@ def auto_heal_source(
                             can_heal=False,
                             reason=f"Cannot auto-heal function '{func.name}': invalid expectation rule '{rule_name}': {exc}",
                         )
-                    nondet_sql = _has_nondeterministic_sql(condition_sql)
-                    if nondet_sql:
+                    refusal_sql, warn_sql = _check_sql_determinism(condition_sql)
+                    if refusal_sql:
                         return HealResult(
                             original_code=source_code,
                             healed_code=source_code,
@@ -307,8 +328,15 @@ def auto_heal_source(
                             can_heal=False,
                             reason=(
                                 f"Refusing to auto-heal function '{func.name}': expectation rule '{rule_name}' "
-                                f"contains non-deterministic SQL function '{nondet_sql}'."
+                                f"contains non-deterministic SQL function '{refusal_sql}'."
                             ),
+                        )
+                    if warn_sql:
+                        warnings.warn(
+                            f"Expectation rule '{rule_name}' in function '{func.name}' contains '{warn_sql}()'. "
+                            "Records evaluated near boundary intervals may evaluate differently upon replay.",
+                            UserWarning,
+                            stacklevel=2,
                         )
                     rules.append(rule)
                 elif len(dec.args) == 1 and isinstance(dec.args[0], ast.Dict):
@@ -340,8 +368,8 @@ def auto_heal_source(
                                 can_heal=False,
                                 reason=f"Cannot auto-heal function '{func.name}': invalid expectation rule '{k.value}': {exc}",
                             )
-                        nondet_sql = _has_nondeterministic_sql(v.value)
-                        if nondet_sql:
+                        refusal_sql, warn_sql = _check_sql_determinism(v.value)
+                        if refusal_sql:
                             return HealResult(
                                 original_code=source_code,
                                 healed_code=source_code,
@@ -349,8 +377,15 @@ def auto_heal_source(
                                 can_heal=False,
                                 reason=(
                                     f"Refusing to auto-heal function '{func.name}': expectation rule '{k.value}' "
-                                    f"contains non-deterministic SQL function '{nondet_sql}'."
+                                    f"contains non-deterministic SQL function '{refusal_sql}'."
                                 ),
+                            )
+                        if warn_sql:
+                            warnings.warn(
+                                f"Expectation rule '{k.value}' in function '{func.name}' contains '{warn_sql}()'. "
+                                "Records evaluated near boundary intervals may evaluate differently upon replay.",
+                                UserWarning,
+                                stacklevel=2,
                             )
                         rules.append(rule)
                 else:
