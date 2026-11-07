@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 import sqlglot
@@ -60,7 +62,8 @@ def test_cdc_drops_change_type_before_merge_and_handles_deletes_separately() -> 
     # SCD1 MERGE must not update or insert _change_type column
     assert "source._change_type" not in template.scd1_merge_sql
     # Deletes must be handled in a separate clause
-    assert "DELETE FROM silver_orders" in template.scd1_merge_sql
+    assert "cdc_deletes_batch" in template.scd1_merge_sql
+    assert "THEN DELETE" in template.scd1_merge_sql
 
 
 def test_scd2_template_structure_and_syntax() -> None:
@@ -109,8 +112,8 @@ def test_scd2_composite_keys_and_recency_guard() -> None:
     # Both composite keys must be joined in ON clause
     assert "target.tenant_id = staged.merge_key_tenant_id" in sql
     assert "target.user_id = staged.merge_key_user_id" in sql
-    # Recency guard on SCD2 UPDATE
-    assert "target.updated_at IS NULL OR staged.updated_at >= target.updated_at" in sql
+    # Recency guard on SCD2 valid_from in staging
+    assert "source.updated_at > current_target.valid_from" in sql
 
 
 def test_scd1_recency_guard() -> None:
@@ -140,7 +143,7 @@ def test_scd2_requires_value_cols() -> None:
 
 
 def test_auto_cdc_creates_streaming_table() -> None:
-    """AUTO CDC template must include dlt.create_streaming_table before dlt.apply_changes."""
+    """AUTO CDC template must include dlt.create_streaming_table before dlt.create_auto_cdc_flow and filter update_preimage."""
     doctor = CdcDoctor()
     template = doctor.generate_cdc_templates(
         target_table="silver_orders",
@@ -154,10 +157,26 @@ def test_auto_cdc_creates_streaming_table() -> None:
     parsed_ast = ast.parse(code)
     assert parsed_ast is not None
 
-    # Must declare create_streaming_table before apply_changes
+    # Must filter update_preimage and declare create_streaming_table before create_auto_cdc_flow
+    assert "update_preimage" in code
     assert "dlt.create_streaming_table" in code
-    assert "dlt.apply_changes" in code
-    assert code.index("dlt.create_streaming_table") < code.index("dlt.apply_changes")
+    assert "dlt.create_auto_cdc_flow" in code
+    assert code.index("dlt.create_streaming_table") < code.index("dlt.create_auto_cdc_flow")
+
+
+def test_source_is_cdf_false_omits_change_type() -> None:
+    """When source_is_cdf is False, code must not reference _change_type."""
+    doctor = CdcDoctor()
+    template = doctor.generate_cdc_templates(
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        source_is_cdf=False,
+    )
+    assert "_change_type" not in template.microbatch_dedup_code
+    assert "cdc_deletes_batch" not in template.microbatch_dedup_code
+    assert "cdc_deletes_batch" not in template.scd1_merge_sql
+    assert "THEN DELETE" not in template.scd1_merge_sql
+    assert ast.parse(template.microbatch_dedup_code) is not None
 
 
 def test_auto_cdc_requires_source_stream() -> None:
@@ -181,13 +200,12 @@ def test_cdc_custom_source_stream_and_template_attributes() -> None:
         value_cols=["name", "email"],
     )
     assert template.source_stream == "bronze_customers_cdc"
-    assert "source='bronze_customers_cdc'" in template.auto_cdc_code
+    assert "dlt.read_stream('bronze_customers_cdc')" in template.auto_cdc_code
     assert "target.region = source.region" in template.scd1_merge_sql
     assert "email" in template.scd2_merge_sql
 
 
 def test_cdc_cli_flags_source_partition_values() -> None:
-    from unittest.mock import patch
 
     from dlt_doctor.cli import main
 
@@ -212,58 +230,172 @@ def test_cdc_cli_flags_source_partition_values() -> None:
 
 
 @pytest.mark.integration
-def test_execute_cdc_scd_on_pyspark() -> None:
-    """Execute generated CDC SCD1 and SCD2 statements against local PySpark Delta tables."""
-    try:
-        from pyspark.sql import SparkSession
-    except ImportError:
-        pytest.skip("PySpark not installed")
+def test_execute_cdc_scd_on_pyspark(spark: Any) -> None:
+    """Execute generated CDC SCD1 and SCD2 statements against local PySpark Delta tables,
+    verifying in-order, late, and delete events with exact rows and exactly one current row per key.
+    """
+    import shutil
+    import tempfile
+
+    doctor = CdcDoctor()
+
+    tmp_scd1 = tempfile.mkdtemp().replace("\\", "/")
+    tmp_scd2 = tempfile.mkdtemp().replace("\\", "/")
 
     try:
-        spark = (
-            SparkSession.builder.master("local[1]")
-            .appName("CdcTest")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config(
-                "spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog"
-            )
-            .getOrCreate()
-        )
-    except Exception as exc:
-        pytest.skip(f"Local PySpark/JVM not available: {exc}")
+        # 1. SCD1 Delta Execution with in-order, late, and delete events
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd1_orders")
+        spark.sql(f"""
+            CREATE TABLE default.test_cdc_scd1_orders (
+                id INT,
+                amt DOUBLE,
+                updated_at STRING
+            ) USING DELTA LOCATION '{tmp_scd1}'
+        """)
+        # Seed initial rows: id=1 and id=2 at 10:00:00
+        spark.sql("""
+            INSERT INTO default.test_cdc_scd1_orders VALUES
+            (1, 100.0, '2026-01-01 10:00:00'),
+            (2, 200.0, '2026-01-01 10:00:00')
+        """)
 
-    try:
-        # Create SCD1 target and batch
-        spark.sql(
-            "CREATE TABLE IF NOT EXISTS default.cdc_scd1_tgt (id INT, amt DOUBLE) USING DELTA"
+        # Batch 1:
+        # - In-order upsert on id=1 (11:00:00, 150.0)
+        # - New row insert on id=3 (11:00:00, 300.0)
+        # - Late delete on id=1 (08:00:00) -> must be ignored by recency guard
+        # - In-order delete on id=2 (12:00:00) -> must delete id=2
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT 1 AS id, 150.0 AS amt, '2026-01-01 11:00:00' AS updated_at
+            UNION ALL
+            SELECT 3 AS id, 300.0 AS amt, '2026-01-01 11:00:00' AS updated_at
+        """)
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS
+            SELECT 1 AS id, 100.0 AS amt, '2026-01-01 08:00:00' AS updated_at
+            UNION ALL
+            SELECT 2 AS id, 200.0 AS amt, '2026-01-01 12:00:00' AS updated_at
+        """)
+
+        tmpl_scd1 = doctor.generate_cdc_templates(
+            target_table="default.test_cdc_scd1_orders",
+            primary_keys=["id"],
+            event_time_col="updated_at",
+            source_is_cdf=True,
         )
-        spark.sql("CREATE OR REPLACE TEMP VIEW cdc_deletes_batch AS SELECT 1 AS id")
-        spark.sql("CREATE OR REPLACE TEMP VIEW source_cdc_batch AS SELECT 2 AS id, 100.0 AS amt")
-        doctor = CdcDoctor()
-        tmpl = doctor.generate_cdc_templates("default.cdc_scd1_tgt", ["id"])
-        for stmt in tmpl.scd1_merge_sql.split(";"):
+        for stmt in tmpl_scd1.scd1_merge_sql.split(";"):
             cleaned = stmt.strip()
             if cleaned:
                 spark.sql(cleaned)
 
-        # Create SCD2 target and execute SCD2 MERGE
-        spark.sql("""
-            CREATE TABLE IF NOT EXISTS default.cdc_scd2_tgt (
-                id INT,
-                amt DOUBLE,
-                updated_at TIMESTAMP,
-                is_current BOOLEAN,
-                valid_from TIMESTAMP,
-                valid_to TIMESTAMP
-            ) USING DELTA
-        """)
+        scd1_rows = {
+            (r.id, r.amt, r.updated_at)
+            for r in spark.sql(
+                "SELECT id, amt, updated_at FROM default.test_cdc_scd1_orders"
+            ).collect()
+        }
+        # id=1 updated to 150.0; id=2 deleted; id=3 inserted at 300.0
+        assert scd1_rows == {
+            (1, 150.0, "2026-01-01 11:00:00"),
+            (3, 300.0, "2026-01-01 11:00:00"),
+        }
+
+        # Late upsert on id=1 at 09:00:00 -> must be ignored by recency guard
         spark.sql("""
             CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
-            SELECT 2 AS id, 150.0 AS amt, current_timestamp() AS updated_at
+            SELECT 1 AS id, 999.0 AS amt, '2026-01-01 09:00:00' AS updated_at
         """)
+        for stmt in tmpl_scd1.scd1_merge_sql.split(";"):
+            cleaned = stmt.strip()
+            if cleaned:
+                spark.sql(cleaned)
+
+        scd1_rows_after_late = {
+            (r.id, r.amt, r.updated_at)
+            for r in spark.sql(
+                "SELECT id, amt, updated_at FROM default.test_cdc_scd1_orders"
+            ).collect()
+        }
+        assert scd1_rows_after_late == scd1_rows
+
+        # 2. SCD2 Delta Execution: in-order update, late update, brand new key
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd2_customers")
+        spark.sql(f"""
+            CREATE TABLE default.test_cdc_scd2_customers (
+                id INT,
+                name STRING,
+                is_current BOOLEAN,
+                valid_from STRING,
+                valid_to STRING
+            ) USING DELTA LOCATION '{tmp_scd2}'
+        """)
+        # Seed initial current row for id=1
+        spark.sql("""
+            INSERT INTO default.test_cdc_scd2_customers VALUES
+            (1, 'Alice V1', true, '2026-01-01 10:00:00', NULL)
+        """)
+
         tmpl_scd2 = doctor.generate_cdc_templates(
-            "default.cdc_scd2_tgt", ["id"], event_time_col="updated_at", value_cols=["amt"]
+            target_table="default.test_cdc_scd2_customers",
+            primary_keys=["id"],
+            event_time_col="updated_at",
+            value_cols=["name"],
+            include_scd2=True,
         )
+
+        # In-order update on id=1 at 12:00:00
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT 1 AS id, 'Alice V2' AS name, '2026-01-01 12:00:00' AS updated_at
+        """)
         spark.sql(tmpl_scd2.scd2_merge_sql)
+
+        current_id1 = spark.sql("""
+            SELECT id, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_scd2_customers
+            WHERE id = 1 AND is_current = true
+        """).collect()
+        assert len(current_id1) == 1
+        assert current_id1[0].name == "Alice V2"
+        assert current_id1[0].valid_from == "2026-01-01 12:00:00"
+        assert current_id1[0].valid_to is None
+
+        # Late update on id=1 at 11:00:00 (< current valid_from 12:00:00)
+        # Must be completely ignored; must NOT insert a duplicate is_current row!
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT 1 AS id, 'Alice Late' AS name, '2026-01-01 11:00:00' AS updated_at
+        """)
+        spark.sql(tmpl_scd2.scd2_merge_sql)
+
+        current_id1_after_late = spark.sql("""
+            SELECT id, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_scd2_customers
+            WHERE id = 1 AND is_current = true
+        """).collect()
+        assert len(current_id1_after_late) == 1
+        assert current_id1_after_late[0].name == "Alice V2"
+
+        # Insert brand new key: id=2 at 13:00:00
+        spark.sql("""
+            CREATE OR REPLACE TEMP VIEW source_cdc_batch AS
+            SELECT 2 AS id, 'Bob New' AS name, '2026-01-01 13:00:00' AS updated_at
+        """)
+        spark.sql(tmpl_scd2.scd2_merge_sql)
+
+        all_current = spark.sql("""
+            SELECT id, name, is_current, valid_from, valid_to
+            FROM default.test_cdc_scd2_customers
+            WHERE is_current = true
+            ORDER BY id
+        """).collect()
+        assert len(all_current) == 2
+        assert [(r.id, r.name, r.is_current, r.valid_from) for r in all_current] == [
+            (1, "Alice V2", True, "2026-01-01 12:00:00"),
+            (2, "Bob New", True, "2026-01-01 13:00:00"),
+        ]
     finally:
-        spark.stop()
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd1_orders")
+        spark.sql("DROP TABLE IF EXISTS default.test_cdc_scd2_customers")
+        shutil.rmtree(tmp_scd1, ignore_errors=True)
+        shutil.rmtree(tmp_scd2, ignore_errors=True)

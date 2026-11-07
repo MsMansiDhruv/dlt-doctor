@@ -82,6 +82,47 @@ class CdcDoctor:
             else ""
         )
 
+        if source_is_cdf:
+            cdf_deletes_block = (
+                "    # Handle deletes in a dedicated view, then drop _change_type before MERGE\n"
+                "    deletes_df = deduped_df.filter(F.col('_change_type') == 'delete')\n"
+                "    deletes_df.createOrReplaceTempView('cdc_deletes_batch')\n\n"
+                "    # Clean CDF metadata and drop _change_type to prevent schema collision in target table\n"
+                "    cleaned_df = (\n"
+                "        deduped_df.filter(F.col('_change_type') != 'delete')\n"
+                "        .drop('_change_type', '_commit_version', '_commit_timestamp')\n"
+                "    )\n"
+                "    cleaned_df.createOrReplaceTempView('source_cdc_batch')\n"
+            )
+        else:
+            cdf_deletes_block = "    deduped_df.createOrReplaceTempView('source_cdc_batch')\n"
+
+        scd1_del_sql = (
+            f"-- 1. Delete clause: process CDC deletes with recency guard\n"
+            f"MERGE INTO {clean_target} AS target\n"  # nosec B608
+            f"USING cdc_deletes_batch AS del\n"
+            f"ON {del_join}\n"
+            f"WHEN MATCHED AND (target.{clean_time} IS NULL OR del.{clean_time} >= target.{clean_time}) THEN DELETE;"
+        )
+
+        scd1_upsert_sql = (
+            f"-- 2. Upsert clause: source_cdc_batch with recency guard\n"
+            f"MERGE INTO {clean_target} AS target\n"  # nosec B608
+            f"USING source_cdc_batch AS source\n"
+            f"ON {pk_join} {partition_clause}\n"
+            f"WHEN MATCHED AND (target.{clean_time} IS NULL OR source.{clean_time} >= target.{clean_time}) THEN UPDATE SET *\n"
+            f"WHEN NOT MATCHED THEN INSERT *;"
+        )
+
+        scd1_sql = f"{scd1_del_sql}\n\n{scd1_upsert_sql}" if source_is_cdf else scd1_upsert_sql
+
+        # Generate Python execution statements for microbatch_df.sparkSession
+        exec_lines: list[str] = []
+        if source_is_cdf:
+            exec_lines.append(f'    spark.sql("""{scd1_del_sql}""")')
+        exec_lines.append(f'    spark.sql("""{scd1_upsert_sql}""")')
+        exec_block = "\n".join(exec_lines)
+
         dedup_code = (
             "# 1. In-batch window deduplication (prevents Spark 'multiple matches' MERGE error)\n"
             "from pyspark.sql import Window, functions as F\n\n"
@@ -97,30 +138,9 @@ class CdcDoctor:
             "        .filter(F.col('_rn') == 1)\n"
             "        .drop('_rn')\n"
             "    )\n"
-            "    # Handle deletes in a dedicated view, then drop _change_type before MERGE\n"
-            "    deletes_df = deduped_df.filter(F.col('_change_type') == 'delete')\n"
-            "    deletes_df.createOrReplaceTempView('cdc_deletes_batch')\n\n"
-            "    # Clean CDF metadata and drop _change_type to prevent schema collision in target table\n"
-            "    cleaned_df = (\n"
-            "        deduped_df.filter(F.col('_change_type') != 'delete')\n"
-            "        .drop('_change_type', '_commit_version', '_commit_timestamp')\n"
-            "    )\n"
-            "    cleaned_df.createOrReplaceTempView('source_cdc_batch')\n"
-        )
-
-        scd1_sql = (
-            f"-- 1. Delete clause: process CDC deletes in a dedicated clause\n"
-            f"DELETE FROM {clean_target} AS target\n"  # nosec B608
-            f"WHERE EXISTS (\n"
-            f"    SELECT 1 FROM cdc_deletes_batch AS del\n"
-            f"    WHERE {del_join}\n"
-            f");\n\n"
-            f"-- 2. Upsert clause: source_cdc_batch has _change_type dropped with recency guard\n"
-            f"MERGE INTO {clean_target} AS target\n"  # nosec B608
-            f"USING source_cdc_batch AS source\n"
-            f"ON {pk_join} {partition_clause}\n"
-            f"WHEN MATCHED AND (target.{clean_time} IS NULL OR source.{clean_time} >= target.{clean_time}) THEN UPDATE SET *\n"
-            f"WHEN NOT MATCHED THEN INSERT *;"
+            f"{cdf_deletes_block}"
+            "    spark = microbatch_df.sparkSession\n"
+            f"{exec_block}\n"
         )
 
         scd2_sql = ""
@@ -149,30 +169,41 @@ class CdcDoctor:
                 f"USING (\n"
                 f"    SELECT {scd2_merge_key_selects}, source.* FROM source_cdc_batch AS source\n"
                 f"    JOIN {clean_target} AS current_target ON {current_target_pk_join} AND current_target.is_current = true\n"
+                f"    WHERE source.{clean_time} > current_target.valid_from\n"
                 f"    UNION ALL\n"
                 f"    SELECT {scd2_null_key_selects}, source.* FROM source_cdc_batch AS source\n"
+                f"    LEFT JOIN {clean_target} AS current_target ON {current_target_pk_join} AND current_target.is_current = true\n"
+                f"    WHERE current_target.valid_from IS NULL OR source.{clean_time} > current_target.valid_from\n"
                 f") AS staged\n"
                 f"ON {scd2_on_clause}\n"
-                f"WHEN MATCHED AND (target.{clean_time} IS NULL OR staged.{clean_time} >= target.{clean_time}) THEN\n"
+                f"WHEN MATCHED THEN\n"
                 f"    UPDATE SET is_current = false, valid_to = staged.{clean_time}\n"
                 f"WHEN NOT MATCHED THEN\n"
                 f"    INSERT ({insert_cols_str})\n"
                 f"    VALUES ({insert_vals_str});"
             )
 
+        auto_cdc_target_func = clean_target.replace(".", "_")
         auto_cdc_code = (
             (
                 "# Modern Databricks Lakeflow Declarative CDC pattern (Recommended)\n"
                 "import dlt\n"
                 "from pyspark.sql import functions as F\n\n"
-                "# 1. Declare target streaming table before applying changes\n"
+                "# 1. Clean CDF stream to filter update_preimage before change application\n"
+                f"@dlt.view(name='{clean_target}_cdf_clean')\n"
+                f"def {auto_cdc_target_func}_cdf_clean():\n"
+                f"    return (\n"
+                f"        dlt.read_stream('{clean_source}')\n"
+                f"        .filter(F.col('_change_type') != 'update_preimage')\n"
+                f"    )\n\n"
+                "# 2. Declare target streaming table before applying changes\n"
                 "dlt.create_streaming_table(\n"
                 f"    name='{clean_target}'\n"
                 ")\n\n"
-                "# 2. Declare CDC flow into streaming table\n"
-                "dlt.apply_changes(\n"
+                "# 3. Declare CDC flow into streaming table using create_auto_cdc_flow\n"
+                "dlt.create_auto_cdc_flow(\n"
                 f"    target='{clean_target}',\n"
-                f"    source='{clean_source}',\n"
+                f"    source='{clean_target}_cdf_clean',\n"
                 f"    keys=[{pk_str}],\n"
                 f"    sequence_by=F.col('{clean_seq}'),\n"
                 "    apply_as_deletes=F.expr(\"_change_type = 'delete'\"),\n"
