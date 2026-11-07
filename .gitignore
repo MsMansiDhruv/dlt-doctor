@@ -26,3 +26,8 @@ htmlcov/
 
 # Documentation build
 site/
+
+# Spark local files
+spark-warehouse/
+metastore_db/
+derby.log
