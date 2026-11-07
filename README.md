@@ -370,7 +370,7 @@ The test suite validates all diagnostic engines and integration components acros
 ```bash
 # Fast unit test suite (zero external cluster dependencies)
 pytest -m "not integration"
-# 182 passed in 0.47s
+# 197 passed in 0.52s
 
 # Integration test suite (executed on local PySpark + Delta Lake)
 REQUIRE_SPARK=1 pytest -m integration -rs -v
