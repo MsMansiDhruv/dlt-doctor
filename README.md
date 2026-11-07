@@ -364,14 +364,19 @@ if vac_report.safety_level.value != "DANGEROUS":
 
 ## Verification & Test Suite
 
-The test suite validates all 11 diagnostic engines across Python 3.10, 3.11, and 3.12 with zero external cluster dependencies:
+The test suite validates all diagnostic engines and integration components across Python 3.10, 3.11, 3.12, and 3.13:
 
 ```bash
-pytest -v
-# 63 passed in 0.17s
+# Fast unit test suite (zero external cluster dependencies)
+pytest -m "not integration"
+# 182 passed in 0.47s
+
+# Integration test suite (executed on local PySpark + Delta Lake)
+REQUIRE_SPARK=1 pytest -m integration -rs -v
+# 12 passed (executed Delta MERGE, SCD1/SCD2 CDC microbatches, and expectation pipelines)
 ```
 
-All source code is audited with `ruff` and verified against security vulnerabilities with `bandit -r src`.
+All source code is audited with `ruff check src tests`, type-checked with `mypy src`, and verified against security vulnerabilities with `bandit -r src`.
 
 ---
 
