@@ -27,6 +27,7 @@ class DoctorConfig:
     regulated_tables: list[str] = field(
         default_factory=lambda: ["*orders*", "*customers*", "*txn*", "*finance*"]
     )
+    has_explicit_regulated_tables: bool = False
     per_file_ignores: dict[str, list[str]] = field(default_factory=dict)
     severity_overrides: dict[str, DiagnosticSeverity] = field(default_factory=dict)
 
@@ -102,6 +103,7 @@ def _parse_config_dict(data: dict[str, Any]) -> DoctorConfig:
         with contextlib.suppress(ValueError):
             severity_overrides[r_id.upper()] = DiagnosticSeverity(str(sev).upper())
 
+    has_explicit_reg = "regulated_tables" in data
     return DoctorConfig(
         select=data.get("select", []),
         ignore=data.get("ignore", []),
@@ -109,6 +111,7 @@ def _parse_config_dict(data: dict[str, Any]) -> DoctorConfig:
         regulated_tables=data.get(
             "regulated_tables", ["*orders*", "*customers*", "*txn*", "*finance*"]
         ),
+        has_explicit_regulated_tables=has_explicit_reg,
         per_file_ignores=data.get("per_file_ignores", {}),
         severity_overrides=severity_overrides,
     )

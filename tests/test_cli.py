@@ -344,3 +344,157 @@ def p1():
     # Running --check on now-healed directory exits 0
     with patch("sys.argv", ["dlt-doctor", "heal", str(pipe_dir), "--check"]):
         assert main() == 0
+
+
+def test_cli_heal_atomic_write_failure_leaves_disk_untouched(tmp_path: Path) -> None:
+    """If any file in directory cannot be healed, zero files are written and exit code is 3."""
+    pipe_dir = tmp_path / "pipes"
+    pipe_dir.mkdir()
+    good_code = """import dlt
+@dlt.table
+@dlt.expect_or_drop("valid_val", "v > 0")
+def good():
+    return dlt.read_stream("s1")
+"""
+    bad_code = """import dlt
+@dlt.table
+@dlt.expect_all_or_drop(fetch_remote_rules())
+def bad():
+    return dlt.read_stream("s2")
+"""
+    f_good = pipe_dir / "p_good.py"
+    f_bad = pipe_dir / "p_bad.py"
+    f_good.write_text(good_code, encoding="utf-8")
+    f_bad.write_text(bad_code, encoding="utf-8")
+
+    # In write mode, should fail with 3 and leave p_good.py completely untouched
+    with patch("sys.argv", ["dlt-doctor", "heal", str(pipe_dir), "--write"]):
+        exit_code = main()
+        assert exit_code == 3
+
+    assert f_good.read_text(encoding="utf-8") == good_code
+    assert f_bad.read_text(encoding="utf-8") == bad_code
+
+
+def test_cli_heal_skips_ignored_directories(tmp_path: Path) -> None:
+    """Directories like .venv, node_modules, build should be skipped by discovery."""
+    root_dir = tmp_path / "project"
+    root_dir.mkdir()
+
+    venv_dir = root_dir / ".venv" / "lib"
+    venv_dir.mkdir(parents=True)
+    (venv_dir / "bad.py").write_text(
+        """import dlt
+@dlt.table
+@dlt.expect_all_or_drop(fetch_remote_rules())
+def bad():
+    return dlt.read_stream("s2")
+""",
+        encoding="utf-8",
+    )
+
+    clean_file = root_dir / "pipeline.py"
+    clean_file.write_text("import dlt\n# all good", encoding="utf-8")
+
+    with patch("sys.argv", ["dlt-doctor", "heal", str(root_dir), "--check"]):
+        assert main() == 0
+
+
+def test_cli_heal_handles_unicode_decode_error(tmp_path: Path) -> None:
+    """Non-UTF-8 files report cannot auto-heal and exit code 3."""
+    pipe_dir = tmp_path / "pipes"
+    pipe_dir.mkdir()
+    bad_encoding_file = pipe_dir / "corrupted.py"
+    bad_encoding_file.write_bytes(b"\xff\xfe\x00\x00\x80")
+
+    with patch("sys.argv", ["dlt-doctor", "heal", str(pipe_dir), "--check"]):
+        exit_code = main()
+        assert exit_code == 3
+
+
+def test_cli_heal_suppressions(tmp_path: Path) -> None:
+    """Files with inline suppressions, config ignores, or un-regulated tables are compliant."""
+    pipe_dir = tmp_path / "pipes"
+    pipe_dir.mkdir()
+
+    # Inline file-level ignore
+    f_suppressed = pipe_dir / "suppressed.py"
+    f_suppressed.write_text(
+        """# dlt-doctor: ignore[DD001]
+import dlt
+@dlt.table
+@dlt.expect_or_drop("v1", "x > 0")
+def s1():
+    return dlt.read_stream("source")
+""",
+        encoding="utf-8",
+    )
+
+    with patch("sys.argv", ["dlt-doctor", "heal", str(f_suppressed), "--check"]):
+        assert main() == 0
+
+    # pyproject.toml ignore rule
+    proj_dir = tmp_path / "proj_with_config"
+    proj_dir.mkdir()
+    (proj_dir / "pyproject.toml").write_text(
+        """[tool.dlt-doctor]
+ignore = ["DD001"]
+""",
+        encoding="utf-8",
+    )
+    f_proj = proj_dir / "pipe.py"
+    f_proj.write_text(
+        """import dlt
+@dlt.table
+@dlt.expect_or_drop("v1", "x > 0")
+def s1():
+    return dlt.read_stream("source")
+""",
+        encoding="utf-8",
+    )
+    with patch("sys.argv", ["dlt-doctor", "heal", str(proj_dir), "--check"]):
+        assert main() == 0
+
+
+def test_cli_heal_sql_files(tmp_path: Path) -> None:
+    """SQL files with ON VIOLATION DROP ROW exit 3; compliant or suppressed SQL exit 0."""
+    sql_dir = tmp_path / "sql_pipes"
+    sql_dir.mkdir()
+
+    # 1. SQL with ON VIOLATION DROP ROW
+    f_drop = sql_dir / "drop_pipe.sql"
+    f_drop.write_text(
+        """CREATE OR REFRESH STREAMING TABLE silver_orders (
+  CONSTRAINT valid_id EXPECT (id IS NOT NULL) ON VIOLATION DROP ROW
+) AS SELECT * FROM STREAM(bronze_orders);
+""",
+        encoding="utf-8",
+    )
+
+    with patch("sys.argv", ["dlt-doctor", "heal", str(f_drop), "--check"]):
+        assert main() == 3
+
+    # 2. SQL with inline suppression
+    f_drop_suppressed = sql_dir / "drop_suppressed.sql"
+    f_drop_suppressed.write_text(
+        """-- dlt-doctor: ignore[DD001]
+CREATE OR REFRESH STREAMING TABLE silver_orders (
+  CONSTRAINT valid_id EXPECT (id IS NOT NULL) ON VIOLATION DROP ROW
+) AS SELECT * FROM STREAM(bronze_orders);
+""",
+        encoding="utf-8",
+    )
+    with patch("sys.argv", ["dlt-doctor", "heal", str(f_drop_suppressed), "--check"]):
+        assert main() == 0
+
+    # 3. SQL with FAIL UPDATE (already compliant)
+    f_clean = sql_dir / "clean_pipe.sql"
+    f_clean.write_text(
+        """CREATE OR REFRESH STREAMING TABLE silver_orders (
+  CONSTRAINT valid_id EXPECT (id IS NOT NULL) ON VIOLATION FAIL UPDATE
+) AS SELECT * FROM STREAM(bronze_orders);
+""",
+        encoding="utf-8",
+    )
+    with patch("sys.argv", ["dlt-doctor", "heal", str(f_clean), "--check"]):
+        assert main() == 0

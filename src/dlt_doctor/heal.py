@@ -6,12 +6,13 @@ import ast
 import difflib
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import sqlglot
 from sqlglot import expressions as exp
 
+from dlt_doctor.config import DoctorConfig
 from dlt_doctor.expectations import (
     ExpectationRule,
     generate_healed_pipeline_nodes,
@@ -28,6 +29,7 @@ class HealResult:
     can_heal: bool
     reason: str = ""
     tables_healed: list[str] | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 SUFFIX_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
@@ -140,8 +142,78 @@ def _check_sql_determinism(condition_sql: str) -> tuple[str | None, str | None]:
     return refusal_fn, warn_fn
 
 
+def _has_suppression_comment(
+    lines: list[str], func_node: ast.FunctionDef, rule_id: str = "DD001"
+) -> bool:
+    """Check if function or preceding lines contain # dlt-doctor: ignore[DD001]."""
+    first_line = func_node.lineno
+    if func_node.decorator_list:
+        first_line = min(getattr(d, "lineno", func_node.lineno) for d in func_node.decorator_list)
+    start_line = max(0, first_line - 4)
+    end_line = min(
+        len(lines), getattr(func_node, "end_lineno", func_node.lineno) or func_node.lineno
+    )
+
+    for i in range(start_line, end_line):
+        line = lines[i]
+        if "#" in line:
+            comment = line[line.index("#") :].strip()
+            if comment.startswith("# dlt-doctor: ignore"):
+                after = comment[len("# dlt-doctor: ignore") :].strip()
+                if not after:
+                    return True
+                if after.startswith("[") and after.endswith("]"):
+                    rules = [r.strip().upper() for r in after[1:-1].split(",")]
+                    if rule_id.upper() in rules or "ALL" in rules:
+                        return True
+    return False
+
+
+def _has_file_level_suppression(lines: list[str], rule_id: str = "DD001") -> bool:
+    """Check if top lines of file contain # dlt-doctor: ignore[DD001]."""
+    for line in lines[:20]:
+        clean = line.strip()
+        if clean.startswith("#") and "dlt-doctor: ignore" in clean:
+            comment = clean[clean.index("dlt-doctor: ignore") :]
+            after = comment[len("dlt-doctor: ignore") :].strip()
+            if not after:
+                return True
+            if after.startswith("[") and after.endswith("]"):
+                rules = [r.strip().upper() for r in after[1:-1].split(",")]
+                if rule_id.upper() in rules or "ALL" in rules:
+                    return True
+    return False
+
+
+def _has_comment_in_scope(lines: list[str], node: ast.FunctionDef, comment: str) -> bool:
+    """Check if preceding lines or function body contains a specific comment."""
+    first_line = node.lineno
+    if node.decorator_list:
+        first_line = min(getattr(d, "lineno", node.lineno) for d in node.decorator_list)
+    start_line = max(0, first_line - 4)
+    end_line = min(len(lines), getattr(node, "end_lineno", node.lineno) or node.lineno)
+    return any(comment in lines[i] for i in range(start_line, end_line))
+
+
+def _extract_table_name(func_node: ast.FunctionDef) -> str:
+    """Extract table name from decorator kwargs or fallback to function name."""
+    for dec in func_node.decorator_list:
+        if isinstance(dec, ast.Call):
+            for kw in dec.keywords:
+                if (
+                    kw.arg == "name"
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
+                    return kw.value.value
+    return func_node.name
+
+
 def auto_heal_source(
-    source_code: str, file_path: str = "pipeline.py", quarantine_suffix: str = "_quarantine"
+    source_code: str,
+    file_path: str = "pipeline.py",
+    quarantine_suffix: str = "_quarantine",
+    config: DoctorConfig | None = None,
 ) -> HealResult:
     """Analyze source code and synthesize single-pass quarantine tables for expect_or_drop.
 
@@ -207,12 +279,44 @@ def auto_heal_source(
                 if isinstance(tgt, ast.Name):
                     existing_top_level_names.add(tgt.id)
 
+    collected_warnings: list[str] = []
+
+    if config and not config.is_rule_enabled("DD001", Path(file_path).name):
+        return HealResult(
+            original_code=source_code,
+            healed_code=source_code,
+            diff="",
+            can_heal=True,
+            reason="Rule DD001 is ignored by configuration; file is compliant.",
+            tables_healed=[],
+            warnings=[],
+        )
+
+    lines_raw = source_code.splitlines()
+    if _has_file_level_suppression(lines_raw, "DD001"):
+        return HealResult(
+            original_code=source_code,
+            healed_code=source_code,
+            diff="",
+            can_heal=True,
+            reason="File contains inline suppression for DD001; file is compliant.",
+            tables_healed=[],
+            warnings=[],
+        )
+
     # Find functions with expect_or_drop
     target_funcs: list[ast.FunctionDef] = []
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             has_drop = any(_is_drop_decorator(dec) for dec in node.decorator_list)
             if has_drop:
+                if _has_suppression_comment(lines_raw, node, "DD001"):
+                    continue
+                if config and config.has_explicit_regulated_tables:
+                    t_name = _extract_table_name(node)
+                    has_reg = _has_comment_in_scope(lines_raw, node, "# dlt-doctor: regulated")
+                    if not config.is_regulated_table(t_name) and not has_reg:
+                        continue
                 target_funcs.append(node)
 
     if not target_funcs:
@@ -221,8 +325,9 @@ def auto_heal_source(
             healed_code=source_code,
             diff="",
             can_heal=True,
-            reason="No expect_or_drop decorators found; file is already compliant.",
+            reason="No unsuppressed expect_or_drop decorators found; file is compliant.",
             tables_healed=[],
+            warnings=[],
         )
 
     lines = source_code.splitlines(keepends=True)
@@ -332,12 +437,12 @@ def auto_heal_source(
                             ),
                         )
                     if warn_sql:
-                        warnings.warn(
+                        w_msg = (
                             f"Expectation rule '{rule_name}' in function '{func.name}' contains '{warn_sql}()'. "
-                            "Records evaluated near boundary intervals may evaluate differently upon replay.",
-                            UserWarning,
-                            stacklevel=2,
+                            "Records evaluated near boundary intervals may evaluate differently upon replay."
                         )
+                        warnings.warn(w_msg, UserWarning, stacklevel=2)
+                        collected_warnings.append(w_msg)
                     rules.append(rule)
                 elif len(dec.args) == 1 and isinstance(dec.args[0], ast.Dict):
                     for k, v in zip(dec.args[0].keys, dec.args[0].values, strict=False):
@@ -381,12 +486,12 @@ def auto_heal_source(
                                 ),
                             )
                         if warn_sql:
-                            warnings.warn(
+                            w_msg = (
                                 f"Expectation rule '{k.value}' in function '{func.name}' contains '{warn_sql}()'. "
-                                "Records evaluated near boundary intervals may evaluate differently upon replay.",
-                                UserWarning,
-                                stacklevel=2,
+                                "Records evaluated near boundary intervals may evaluate differently upon replay."
                             )
+                            warnings.warn(w_msg, UserWarning, stacklevel=2)
+                            collected_warnings.append(w_msg)
                         rules.append(rule)
                 else:
                     return HealResult(
@@ -580,11 +685,15 @@ def auto_heal_source(
         diff=diff,
         can_heal=True,
         tables_healed=healed_tables,
+        warnings=collected_warnings,
     )
 
 
 def heal_file(
-    file_path: Path | str, write: bool = False, quarantine_suffix: str = "_quarantine"
+    file_path: Path | str,
+    write: bool = False,
+    quarantine_suffix: str = "_quarantine",
+    config: DoctorConfig | None = None,
 ) -> HealResult:
     """Run auto-heal on a file path, optionally writing back the changes."""
     path = Path(file_path)
@@ -592,7 +701,12 @@ def heal_file(
         raise FileNotFoundError(f"File not found: {path}")
 
     source_code = path.read_text(encoding="utf-8")
-    result = auto_heal_source(source_code, file_path=path.name, quarantine_suffix=quarantine_suffix)
+    result = auto_heal_source(
+        source_code,
+        file_path=path.name,
+        quarantine_suffix=quarantine_suffix,
+        config=config,
+    )
 
     if write and result.can_heal and result.diff:
         path.write_text(result.healed_code, encoding="utf-8")
