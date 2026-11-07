@@ -56,7 +56,7 @@ def test_action_clean_pipeline(tmp_path: Path) -> None:
         "GITHUB_STEP_SUMMARY": str(summary_file),
     }
 
-    with patch.dict("os.environ", env, clear=True):
+    with patch.dict("os.environ", env):
         exit_code = run_action()
         assert exit_code == 0
 
@@ -82,7 +82,7 @@ def my_bad_udf(x):
         "INPUT_PATH": str(bad_file),
         "INPUT_FAIL_ON": "CRITICAL",
     }
-    with patch.dict("os.environ", env_crit, clear=True):
+    with patch.dict("os.environ", env_crit):
         assert run_action() == 1
 
     # 2. fail-on NONE exits with 0
@@ -90,7 +90,7 @@ def my_bad_udf(x):
         "INPUT_PATH": str(bad_file),
         "INPUT_FAIL_ON": "NONE",
     }
-    with patch.dict("os.environ", env_none, clear=True):
+    with patch.dict("os.environ", env_none):
         assert run_action() == 0
 
 
@@ -112,7 +112,7 @@ def my_bad_udf(x):
         "INPUT_SARIF_OUTPUT": str(sarif_file),
     }
 
-    with patch.dict("os.environ", env, clear=True):
+    with patch.dict("os.environ", env):
         assert run_action() == 0
 
     assert sarif_file.exists()
@@ -146,7 +146,7 @@ ignore = ["PYSPARK-001"]
         "INPUT_CONFIG": str(cfg_file),
         "INPUT_FAIL_ON": "CRITICAL",
     }
-    with patch.dict("os.environ", env, clear=True):
+    with patch.dict("os.environ", env):
         # Ignored PYSPARK-001 -> 0 findings -> exits 0
         assert run_action() == 0
 

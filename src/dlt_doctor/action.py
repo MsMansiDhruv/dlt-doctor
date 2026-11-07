@@ -192,7 +192,12 @@ def run_action() -> int:
     if config:
         cmd.extend(["--config", config])
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # nosec B603
+    sub_env = dict(os.environ)
+    src_dir = str(Path(__file__).resolve().parent.parent)
+    existing_pp = sub_env.get("PYTHONPATH", "")
+    sub_env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing_pp}" if existing_pp else src_dir
+
+    proc = subprocess.run(cmd, env=sub_env, capture_output=True, text=True, check=False)  # nosec B603
     if proc.returncode != 0 and not proc.stdout:
         sys.stderr.write(proc.stderr)
         return proc.returncode
