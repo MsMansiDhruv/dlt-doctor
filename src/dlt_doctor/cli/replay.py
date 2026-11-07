@@ -72,6 +72,18 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Optional table of erased/tombstoned primary keys to guard against resurrection",
     )
+    p.add_argument(
+        "--allow-resurrection",
+        action="store_true",
+        default=False,
+        help="Explicitly permit replay without an erasure guard table",
+    )
+    p.add_argument(
+        "--erasure-partition-col",
+        action="store_true",
+        default=False,
+        help="Include partition column in erasure table anti-join",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -90,6 +102,8 @@ def handle(args: argparse.Namespace) -> int:
             valid_filter_sql=args.valid_filter,
             allow_unvalidated=args.allow_unvalidated,
             erasure_table=getattr(args, "erasure_table", None),
+            erasure_partition_col=getattr(args, "erasure_partition_col", False),
+            allow_resurrection=getattr(args, "allow_resurrection", False),
         )
     except ValueError as exc:
         import sys

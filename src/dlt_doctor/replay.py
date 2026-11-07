@@ -43,6 +43,8 @@ def generate_replay_sql(
     valid_filter_sql: str | None = None,
     allow_unvalidated: bool = False,
     erasure_table: str | None = None,
+    erasure_partition_col: bool = False,
+    allow_resurrection: bool = False,
 ) -> str:
     """Generate idempotent Delta MERGE SQL to reprocess quarantined records.
 
@@ -92,6 +94,13 @@ def generate_replay_sql(
         raise ValueError(
             "Replay requires either a revalidation condition ('valid_filter_sql') or explicit "
             "confirmation ('allow_unvalidated=True') to prevent re-injecting unvalidated data."
+        )
+
+    if not erasure_table and not allow_resurrection:
+        raise ValueError(
+            "Replay requires either an erasure guard table ('erasure_table') or explicit "
+            "acknowledgment ('allow_resurrection=True') to prevent accidentally resurrecting "
+            "records deleted for retention or compliance (GDPR/CCPA)."
         )
 
     if partition_val is not None and not partition_col:
@@ -147,7 +156,7 @@ def generate_replay_sql(
         post_dedup_conditions.append(f"({valid_filter_sql.strip()})")
     if clean_erasure:
         erased_predicates = [f"erased.{k} = deduped.{k}" for k in clean_keys]
-        if clean_part:
+        if clean_part and erasure_partition_col:
             erased_predicates.append(f"erased.{clean_part} = deduped.{clean_part}")
         erased_join = " AND ".join(erased_predicates)
         post_dedup_conditions.append(

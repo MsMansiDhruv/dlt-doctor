@@ -17,6 +17,7 @@ def test_generate_replay_sql_dedupes_quarantine_by_key() -> None:
         target_table="silver_orders",
         primary_keys=["order_id"],
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     parsed = sqlglot.parse_one(sql, read="spark")
     assert parsed is not None
@@ -31,7 +32,47 @@ def test_replay_requires_revalidation_or_allow_unvalidated() -> None:
             quarantine_table="bronze_quarantine",
             target_table="silver_orders",
             primary_keys=["order_id"],
+            allow_resurrection=True,
         )
+
+
+def test_replay_requires_erasure_table_or_allow_resurrection() -> None:
+    """Replay generator must raise ValueError if neither erasure_table nor allow_resurrection is provided."""
+    with pytest.raises(ValueError, match="Replay requires either an erasure guard table"):
+        generate_replay_sql(
+            quarantine_table="bronze_quarantine",
+            target_table="silver_orders",
+            primary_keys=["order_id"],
+            allow_unvalidated=True,
+        )
+
+
+def test_replay_erasure_partition_col_opt_in() -> None:
+    """Partition column in erasure anti-join is opt-in via erasure_partition_col=True."""
+    sql_default = generate_replay_sql(
+        quarantine_table="bronze_quarantine",
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        partition_col="dt",
+        partition_val="2026-11-01",
+        erasure_table="audit_tombstones",
+        allow_unvalidated=True,
+    )
+    assert "erased.order_id = deduped.order_id" in sql_default
+    assert "erased.dt = deduped.dt" not in sql_default
+
+    sql_with_part = generate_replay_sql(
+        quarantine_table="bronze_quarantine",
+        target_table="silver_orders",
+        primary_keys=["order_id"],
+        partition_col="dt",
+        partition_val="2026-11-01",
+        erasure_table="audit_tombstones",
+        erasure_partition_col=True,
+        allow_unvalidated=True,
+    )
+    assert "erased.order_id = deduped.order_id" in sql_with_part
+    assert "erased.dt = deduped.dt" in sql_with_part
 
 
 def test_replay_with_valid_filter_sql() -> None:
@@ -41,6 +82,7 @@ def test_replay_with_valid_filter_sql() -> None:
         target_table="silver_orders",
         primary_keys=["order_id"],
         valid_filter_sql="amount > 0 AND order_id IS NOT NULL",
+        allow_resurrection=True,
     )
     assert "(amount > 0 AND order_id IS NOT NULL)" in sql
     parsed = sqlglot.parse_one(sql, read="spark")
@@ -55,6 +97,7 @@ def test_replay_invalid_filter_sql_raises() -> None:
             target_table="silver_orders",
             primary_keys=["order_id"],
             valid_filter_sql="amount >>> 0",
+            allow_resurrection=True,
         )
 
 
@@ -66,6 +109,7 @@ def test_replay_rule_name_matches_exact_array() -> None:
         primary_keys=["order_id"],
         rule_name="bad_zip",
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     assert "_failed_rules = array('bad_zip')" in sql
     assert "array_contains" not in sql
@@ -80,6 +124,7 @@ def test_generate_replay_sql_validates_iso_timestamps() -> None:
             primary_keys=["order_id"],
             start_time="not-an-iso-time",
             allow_unvalidated=True,
+            allow_resurrection=True,
         )
 
     with pytest.raises(ValueError, match="Invalid ISO timestamp"):
@@ -89,6 +134,7 @@ def test_generate_replay_sql_validates_iso_timestamps() -> None:
             primary_keys=["order_id"],
             end_time="2026/13/45",
             allow_unvalidated=True,
+            allow_resurrection=True,
         )
 
 
@@ -100,6 +146,7 @@ def test_generate_replay_sql_recency_guard() -> None:
         primary_keys=["order_id"],
         recency_col="updated_at",
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     parsed = sqlglot.parse_one(sql, read="spark")
     assert parsed is not None
@@ -116,6 +163,7 @@ def test_replay_defaults_to_insert_only_without_recency_col() -> None:
         target_table="silver_orders",
         primary_keys=["order_id"],
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     assert "WHEN MATCHED" not in sql
     assert "WHEN NOT MATCHED THEN INSERT *;" in sql
@@ -128,6 +176,7 @@ def test_replay_dedupes_latest_per_key_before_valid_filter_sql() -> None:
         target_table="silver_orders",
         primary_keys=["order_id"],
         valid_filter_sql="amount > 0",
+        allow_resurrection=True,
     )
     assert ") AS deduped\n    WHERE (amount > 0)" in sql
 
@@ -139,6 +188,7 @@ def test_generate_replay_sql_marks_replayed_rows() -> None:
         target_table="silver_orders",
         primary_keys=["order_id"],
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     parsed_default = sqlglot.parse_one(sql_default, read="spark")
     assert parsed_default is not None
@@ -150,6 +200,7 @@ def test_generate_replay_sql_marks_replayed_rows() -> None:
         primary_keys=["order_id"],
         mark_replayed=True,
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     parsed_marked = sqlglot.parse_one(sql_marked, read="spark")
     assert parsed_marked is not None
@@ -165,6 +216,7 @@ def test_generate_replay_sql_partition_pruning_and_dedupe() -> None:
         partition_col="event_date",
         partition_val="2026-11-01",
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     parsed = sqlglot.parse_one(sql, read="spark")
     assert parsed is not None
@@ -179,6 +231,7 @@ def test_generate_replay_sql_partition_pruning_and_dedupe() -> None:
         partition_col="year",
         partition_val=2026,
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     assert "target.year = 2026" in sql_int
 
@@ -194,6 +247,7 @@ def test_replay_rejects_non_finite_float() -> None:
                 partition_col="part_ratio",
                 partition_val=bad_val,
                 allow_unvalidated=True,
+                allow_resurrection=True,
             )
 
 
@@ -206,6 +260,7 @@ def test_replay_partition_val_without_col_raises() -> None:
             primary_keys=["order_id"],
             partition_val="2026-11-01",
             allow_unvalidated=True,
+            allow_resurrection=True,
         )
 
 
@@ -228,6 +283,7 @@ def test_cli_replay_partition_flags() -> None:
         "--partition-val",
         "2026-11-01",
         "--allow-unvalidated",
+        "--allow-resurrection",
     ]
     with patch("sys.argv", test_args):
         exit_code = main()
@@ -287,6 +343,7 @@ def test_execute_replay_sql_on_pyspark(spark: Any) -> None:
             rule_name="bad_amt",
             recency_col="updated_at",
             valid_filter_sql="amt > 0",
+            allow_resurrection=True,
         )
 
         spark.sql(sql)
@@ -353,6 +410,7 @@ def test_execute_replay_with_mark_replayed_on_pyspark(spark: Any) -> None:
             recency_col="updated_at",
             mark_replayed=True,
             valid_filter_sql="amt > 0",
+            allow_resurrection=True,
         )
 
         spark.sql(sql)
@@ -385,6 +443,7 @@ def test_replay_filters_applied_post_dedupe() -> None:
         start_time="2026-01-01T00:00:00",
         end_time="2026-01-02T00:00:00",
         allow_unvalidated=True,
+        allow_resurrection=True,
     )
     parsed = sqlglot.parse_one(sql, read="spark")
     assert parsed is not None
@@ -463,6 +522,7 @@ def test_execute_replay_dedupe_before_rule_filter_on_pyspark(spark: Any) -> None
             primary_keys=["id"],
             rule_name="bad_amt",
             valid_filter_sql="amt > 0",
+            allow_resurrection=True,
         )
         spark.sql(sql)
 
