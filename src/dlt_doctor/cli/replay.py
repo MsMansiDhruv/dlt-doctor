@@ -55,6 +55,12 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Partition value to filter in quarantine and target",
     )
     p.add_argument(
+        "--partition-val-type",
+        choices=["str", "int", "float", "bool"],
+        default="str",
+        help="Data type to parse partition-val as (default: str)",
+    )
+    p.add_argument(
         "--valid-filter",
         "--valid-filter-sql",
         dest="valid_filter",
@@ -87,6 +93,42 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle(args: argparse.Namespace) -> int:
+    import sys
+
+    parsed_partition_val: str | int | float | bool | None = args.partition_val
+    if parsed_partition_val is not None:
+        val_type = getattr(args, "partition_val_type", "str")
+        if val_type == "int":
+            try:
+                parsed_partition_val = int(parsed_partition_val)
+            except ValueError:
+                print(
+                    f"Error: Invalid integer partition value: {args.partition_val}",
+                    file=sys.stderr,
+                )
+                return 2
+        elif val_type == "float":
+            try:
+                parsed_partition_val = float(parsed_partition_val)
+            except ValueError:
+                print(
+                    f"Error: Invalid float partition value: {args.partition_val}",
+                    file=sys.stderr,
+                )
+                return 2
+        elif val_type == "bool":
+            lowered = str(parsed_partition_val).strip().lower()
+            if lowered in {"true", "1", "yes", "t"}:
+                parsed_partition_val = True
+            elif lowered in {"false", "0", "no", "f"}:
+                parsed_partition_val = False
+            else:
+                print(
+                    f"Error: Invalid boolean partition value: {args.partition_val}",
+                    file=sys.stderr,
+                )
+                return 2
+
     try:
         sql = generate_replay_sql(
             quarantine_table=args.quarantine,
@@ -97,7 +139,7 @@ def handle(args: argparse.Namespace) -> int:
             end_time=args.end_time,
             recency_col=args.recency_col,
             partition_col=args.partition_col,
-            partition_val=args.partition_val,
+            partition_val=parsed_partition_val,
             mark_replayed=args.mark_replayed,
             valid_filter_sql=args.valid_filter,
             allow_unvalidated=args.allow_unvalidated,

@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from dlt_doctor.cli import main
 
 
@@ -541,3 +543,290 @@ CREATE OR REFRESH STREAMING TABLE silver_orders (
     )
     with patch("sys.argv", ["dlt-doctor", "heal", str(f_clean), "--check"]):
         assert main() == 0
+
+
+def test_cli_heal_target_under_build_ancestor(tmp_path: Path) -> None:
+    """Ancestors named 'build' or '.venv' must not cause target files to be skipped."""
+    build_dir = tmp_path / "build" / "pipelines"
+    build_dir.mkdir(parents=True)
+    pipe = build_dir / "pipe.py"
+    pipe.write_text(
+        """import dlt
+@dlt.table
+@dlt.expect_or_drop("valid_val", "v > 0")
+def t():
+    return dlt.read_stream("s")
+""",
+        encoding="utf-8",
+    )
+
+    # Must be discovered and report needing heal (exit 1), not exit 0 (no files found)
+    with patch("sys.argv", ["dlt-doctor", "heal", str(build_dir), "--check"]):
+        assert main() == 1
+
+
+def test_cli_heal_per_file_ignores_glob(tmp_path: Path) -> None:
+    """per_file_ignores with path globs (e.g. 'pipes/*') must suppress heal check."""
+    pipes_dir = tmp_path / "pipes"
+    pipes_dir.mkdir()
+    pipe = pipes_dir / "orders.py"
+    pipe.write_text(
+        """import dlt
+@dlt.table
+@dlt.expect_or_drop("valid_val", "v > 0")
+def orders():
+    return dlt.read_stream("s")
+""",
+        encoding="utf-8",
+    )
+
+    cfg_file = tmp_path / "custom.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor.per_file_ignores]
+"pipes/*" = ["DD001"]
+""",
+        encoding="utf-8",
+    )
+
+    # With glob ignore matching pipes/*, heal --check exits 0
+    with patch(
+        "sys.argv",
+        ["dlt-doctor", "heal", str(pipes_dir), "--check", "--config", str(cfg_file)],
+    ):
+        assert main() == 0
+
+
+def test_cli_heal_preserves_crlf_line_endings(tmp_path: Path) -> None:
+    """Heal --write must preserve CRLF line endings without introducing double returns."""
+    pipe = tmp_path / "crlf_pipe.py"
+    code_crlf = (
+        "import dlt\r\n"
+        "@dlt.table\r\n"
+        '@dlt.expect_or_drop("valid_val", "v > 0")\r\n'
+        "def t():\r\n"
+        '    return dlt.read_stream("s")\r\n'
+    )
+    pipe.write_bytes(code_crlf.encode("utf-8"))
+
+    with patch("sys.argv", ["dlt-doctor", "heal", str(pipe), "--write"]):
+        assert main() == 0
+
+    raw_bytes = pipe.read_bytes()
+    assert b"\r\n" in raw_bytes
+    assert b"\r\r\n" not in raw_bytes
+    assert raw_bytes.count(b"\r\n") == raw_bytes.count(b"\n")
+
+
+def test_cli_heal_multitable_sql_regulated_compliance(tmp_path: Path) -> None:
+    """Multi-table SQL files evaluate DROP ROW per table against regulated_tables."""
+    sql_file = tmp_path / "multi_table.sql"
+    sql_file.write_text(
+        """CREATE OR REFRESH STREAMING TABLE unregulated_t (
+  CONSTRAINT valid_id EXPECT (id IS NOT NULL) ON VIOLATION DROP ROW
+) AS SELECT * FROM STREAM(bronze_s);
+
+CREATE OR REFRESH STREAMING TABLE silver_orders (
+  CONSTRAINT valid_id EXPECT (id IS NOT NULL) ON VIOLATION DROP ROW
+) AS SELECT * FROM STREAM(bronze_orders);
+""",
+        encoding="utf-8",
+    )
+
+    cfg_file = tmp_path / "custom.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor]
+regulated_tables = ["silver_orders"]
+""",
+        encoding="utf-8",
+    )
+
+    # Table 2 is regulated and has ON VIOLATION DROP ROW -> exits 3
+    with patch(
+        "sys.argv",
+        ["dlt-doctor", "heal", str(sql_file), "--check", "--config", str(cfg_file)],
+    ):
+        assert main() == 3
+
+
+def test_cli_analyze_fix_honors_config_ignore(tmp_path: Path) -> None:
+    """analyze --fix must honor ignore rules in config without making changes."""
+    pipe = tmp_path / "orders.py"
+    original_code = (
+        "import dlt\n"
+        "@dlt.table\n"
+        '@dlt.expect_or_drop("v1", "x > 0")\n'
+        "def orders():\n"
+        '    return dlt.read_stream("s")\n'
+    )
+    pipe.write_text(original_code, encoding="utf-8")
+
+    cfg_file = tmp_path / "custom.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor]
+ignore = ["DD001"]
+""",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "analyze",
+            str(pipe),
+            "--fix",
+            "--write",
+            "--config",
+            str(cfg_file),
+        ],
+    ):
+        assert main() == 0
+
+    # Code on disk unchanged because rule was ignored
+    assert pipe.read_text(encoding="utf-8") == original_code
+
+
+def test_cli_analyze_fix_honors_inline_suppression(tmp_path: Path) -> None:
+    """analyze --fix must honor inline suppression comments without modifying file."""
+    pipe = tmp_path / "suppressed.py"
+    original_code = (
+        "# dlt-doctor: ignore[DD001]\n"
+        "import dlt\n"
+        "@dlt.table\n"
+        '@dlt.expect_or_drop("v1", "x > 0")\n'
+        "def suppressed():\n"
+        '    return dlt.read_stream("s")\n'
+    )
+    pipe.write_text(original_code, encoding="utf-8")
+
+    with patch(
+        "sys.argv",
+        ["dlt-doctor", "analyze", str(pipe), "--fix", "--write"],
+    ):
+        assert main() == 0
+
+    assert pipe.read_text(encoding="utf-8") == original_code
+
+
+def test_cli_analyze_fix_honors_per_file_ignores(tmp_path: Path) -> None:
+    """analyze --fix must honor per_file_ignores with path globs."""
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir()
+    pipe = legacy_dir / "old_pipe.py"
+    original_code = (
+        "import dlt\n"
+        "@dlt.table\n"
+        '@dlt.expect_or_drop("v1", "x > 0")\n'
+        "def old_pipe():\n"
+        '    return dlt.read_stream("s")\n'
+    )
+    pipe.write_text(original_code, encoding="utf-8")
+
+    cfg_file = tmp_path / "custom.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor.per_file_ignores]
+"legacy/*" = ["DD001"]
+""",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "analyze",
+            str(pipe),
+            "--fix",
+            "--write",
+            "--config",
+            str(cfg_file),
+        ],
+    ):
+        assert main() == 0
+
+    assert pipe.read_text(encoding="utf-8") == original_code
+
+
+def test_cli_replay_partition_val_typed(capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI replay must cast partition_val based on --partition-val-type."""
+    # 1. Integer partition value
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "replay",
+            "--quarantine",
+            "main.bronze.orders_quarantine",
+            "--target",
+            "main.silver.orders",
+            "--keys",
+            "id",
+            "--valid-filter",
+            "amount > 0",
+            "--allow-resurrection",
+            "--partition-col",
+            "batch_id",
+            "--partition-val",
+            "42",
+            "--partition-val-type",
+            "int",
+        ],
+    ):
+        assert main() == 0
+
+    out = capsys.readouterr().out
+    assert "target.batch_id = 42" in out
+    assert "target.batch_id = '42'" not in out
+
+    # 2. Boolean partition value
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "replay",
+            "--quarantine",
+            "main.bronze.orders_quarantine",
+            "--target",
+            "main.silver.orders",
+            "--keys",
+            "id",
+            "--valid-filter",
+            "amount > 0",
+            "--allow-resurrection",
+            "--partition-col",
+            "is_active",
+            "--partition-val",
+            "true",
+            "--partition-val-type",
+            "bool",
+        ],
+    ):
+        assert main() == 0
+
+    out_bool = capsys.readouterr().out
+    assert "target.is_active = true" in out_bool
+
+    # 3. Invalid integer partition value exits 2
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "replay",
+            "--quarantine",
+            "main.bronze.orders_quarantine",
+            "--target",
+            "main.silver.orders",
+            "--keys",
+            "id",
+            "--valid-filter",
+            "amount > 0",
+            "--allow-resurrection",
+            "--partition-col",
+            "batch_id",
+            "--partition-val",
+            "not_an_int",
+            "--partition-val-type",
+            "int",
+        ],
+    ):
+        assert main() == 2

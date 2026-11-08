@@ -76,6 +76,13 @@ def handle(args: argparse.Namespace) -> int:
         print(f"Error: Path not found: {target}", file=sys.stderr)
         return 2
 
+    config_target = (
+        Path(args.config)
+        if getattr(args, "config", None)
+        else (target if target.is_dir() else target.parent)
+    )
+    config = load_config(config_target)
+
     # If --fix / --auto-heal is requested on a file, delegate to heal
     if args.fix:
         if target.is_dir():
@@ -88,6 +95,7 @@ def handle(args: argparse.Namespace) -> int:
             target,
             write=write_mode,
             quarantine_suffix=getattr(args, "quarantine_suffix", "_quarantine"),
+            config=config,
         )
         if not heal_res.can_heal:
             print(heal_res.reason or "Cannot auto-heal file.", file=sys.stderr)
@@ -102,9 +110,6 @@ def handle(args: argparse.Namespace) -> int:
         else:
             print(heal_res.reason or "No changes needed.")
         return 0
-
-    config_target = Path(args.config) if getattr(args, "config", None) else target
-    config = load_config(config_target)
 
     severity_rank = {
         DiagnosticSeverity.CRITICAL: 5,

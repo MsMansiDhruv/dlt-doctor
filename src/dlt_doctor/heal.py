@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import difflib
+import os
 import re
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -281,7 +284,7 @@ def auto_heal_source(
 
     collected_warnings: list[str] = []
 
-    if config and not config.is_rule_enabled("DD001", Path(file_path).name):
+    if config and not config.is_rule_enabled("DD001", file_path):
         return HealResult(
             original_code=source_code,
             healed_code=source_code,
@@ -703,13 +706,35 @@ def heal_file(
     source_code = path.read_text(encoding="utf-8")
     result = auto_heal_source(
         source_code,
-        file_path=path.name,
+        file_path=str(path).replace("\\", "/"),
         quarantine_suffix=quarantine_suffix,
         config=config,
     )
 
     if write and result.can_heal and result.diff:
-        path.write_text(result.healed_code, encoding="utf-8")
+        raw_bytes = path.read_bytes()
+        target_newline = "\r\n" if b"\r\n" in raw_bytes else "\n"
+        normalized_code = result.healed_code.replace("\r\n", "\n")
+        if target_newline == "\r\n":
+            normalized_code = normalized_code.replace("\n", "\r\n")
+
+        temp_file: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                dir=path.parent,
+                delete=False,
+            ) as tmp:
+                tmp.write(normalized_code)
+                temp_file = Path(tmp.name)
+            os.replace(temp_file, path)
+        except Exception:
+            if temp_file and temp_file.exists():
+                with contextlib.suppress(OSError):
+                    temp_file.unlink()
+            raise
 
     return result
 

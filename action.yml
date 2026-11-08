@@ -51,13 +51,6 @@ runs:
         python -m pip install --upgrade pip
         python -m pip install "${{ github.action_path }}"
 
-    - name: Run dlt-doctor heal check
-      if: ${{ inputs.check-heal == 'true' }}
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        dlt-doctor heal "${{ inputs.path }}" --check
-
     - name: Run dlt-doctor analyze
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -69,6 +62,20 @@ runs:
         INPUT_SARIF_OUTPUT: ${{ inputs.sarif-output }}
       run: |
         python -m dlt_doctor.action
+
+    - name: Run dlt-doctor heal check
+      if: always() && inputs.check-heal == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        HEAL_PATH: ${{ inputs.path }}
+        HEAL_CONFIG: ${{ inputs.config }}
+      run: |
+        HEAL_CMD=(dlt-doctor heal "$HEAL_PATH" --check)
+        if [ -n "$HEAL_CONFIG" ]; then
+          HEAL_CMD+=(--config "$HEAL_CONFIG")
+        fi
+        "${HEAL_CMD[@]}"
 
 branding:
   icon: "activity"
