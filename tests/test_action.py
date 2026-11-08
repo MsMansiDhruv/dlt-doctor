@@ -43,6 +43,23 @@ def test_action_yml_structure() -> None:
     # Verify single action entrypoint
     assert "dlt_doctor.action" in content
 
+    # Verify analyze step precedes heal check step
+    analyze_pos = content.index("Run dlt-doctor analyze")
+    heal_pos = content.index("Run dlt-doctor heal check")
+    assert analyze_pos < heal_pos, "analyze step must run before heal check step"
+
+    # Verify heal step conditions and safe environment variable passing
+    assert "if: always() && inputs.check-heal == 'true'" in content
+    assert "HEAL_PATH: ${{ inputs.path }}" in content
+    assert "HEAL_CONFIG: ${{ inputs.config }}" in content
+
+    # Verify no raw input injection in heal run script
+    heal_section = content[heal_pos:]
+    run_idx = heal_section.index("run: |")
+    run_script = heal_section[run_idx:]
+    assert "${{ inputs.path }}" not in run_script
+    assert "${{ inputs.config }}" not in run_script
+
 
 def test_action_clean_pipeline(tmp_path: Path) -> None:
     test_file = tmp_path / "clean_pipeline.py"
@@ -174,4 +191,35 @@ def t1():
 
     # heal --check exits 0 on healed
     with patch("sys.argv", ["dlt-doctor", "heal", str(unhealed), "--check"]):
+        assert main() == 0
+
+
+def test_action_heal_custom_config(tmp_path: Path) -> None:
+    """Verify heal --config loads custom TOML config to suppress unhealed rules."""
+    unhealed = tmp_path / "unhealed.py"
+    unhealed.write_text(
+        """import dlt
+@dlt.table
+@dlt.expect_or_drop("valid_val", "v > 0")
+def t1():
+    return dlt.read_stream("s1")
+""",
+        encoding="utf-8",
+    )
+    cfg_file = tmp_path / "custom.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor]
+ignore = ["DD001"]
+""",
+        encoding="utf-8",
+    )
+
+    # Without config: heal --check fails with 1
+    with patch("sys.argv", ["dlt-doctor", "heal", str(unhealed), "--check"]):
+        assert main() == 1
+
+    # With config: heal --check ignores DD001 and succeeds with 0
+    with patch(
+        "sys.argv", ["dlt-doctor", "heal", str(unhealed), "--check", "--config", str(cfg_file)]
+    ):
         assert main() == 0

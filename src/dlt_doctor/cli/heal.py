@@ -34,6 +34,11 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         default="_quarantine",
         help="Suffix for synthesized quarantine table (default: _quarantine)",
     )
+    p.add_argument(
+        "--config",
+        default=None,
+        help="Path to custom configuration file or directory containing pyproject.toml",
+    )
 
 
 def _discover_heal_files(target: Path) -> list[Path]:
@@ -109,7 +114,12 @@ def handle(args: argparse.Namespace) -> int:
         print(f"Error: Path not found: {target}", file=sys.stderr)
         return 2
 
-    config = load_config(target if target.is_dir() else target.parent)
+    config_target = (
+        Path(args.config)
+        if getattr(args, "config", None)
+        else (target if target.is_dir() else target.parent)
+    )
+    config = load_config(config_target)
     files = _discover_heal_files(target)
 
     if not files:
