@@ -335,13 +335,22 @@ class ExpectationDoctor:
     To query expectation metrics from the Databricks Event Log:
     ```sql
     SELECT
-        timestamp,
-        message,
-        details:flow_progress.metrics.expectations AS expectations_metrics,
-        details:flow_progress.data_quality.expectations AS dq_expectations
-    FROM event_log(TABLE(<pipeline_target_table>))
-    WHERE event_type = 'flow_progress'
-    ORDER BY timestamp DESC;
+      row_expectations.dataset,
+      row_expectations.name AS expectation_name,
+      row_expectations.passed_records,
+      row_expectations.failed_records
+    FROM (
+      SELECT
+        explode(
+          from_json(
+            details:flow_progress.data_quality.expectations,
+            "array<struct<name: string, dataset: string, passed_records: int, failed_records: int>>"
+          )
+        ) row_expectations
+      FROM event_log(TABLE(<pipeline_target_table>))
+      WHERE event_type = 'flow_progress'
+        AND details:flow_progress.data_quality.expectations IS NOT NULL
+    );
     ```
     """
 
