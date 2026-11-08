@@ -364,7 +364,7 @@ if vac_report.safety_level.value != "DANGEROUS":
 
 ## Verification & Test Suite
 
-The test suite validates all diagnostic engines and integration components across Python 3.10, 3.11, 3.12, and 3.13:
+The test suite validates all diagnostic engines and integration components across Python 3.10, 3.11, and 3.12:
 
 ```bash
 # Fast unit test suite (zero external cluster dependencies)

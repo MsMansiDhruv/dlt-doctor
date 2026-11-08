@@ -484,6 +484,20 @@ def test_pyspark_integration_warn_expectations_executed(
     proxy_spark = ProxySpark(tables)
     rec_dp = RecordingDP(tables)
 
+    fake_dp_module = types.ModuleType("pyspark.pipelines")
+    for attr in [
+        "temporary_view",
+        "table",
+        "view",
+        "expect_all",
+        "expect",
+        "expect_or_fail",
+        "expect_all_or_fail",
+    ]:
+        setattr(fake_dp_module, attr, getattr(rec_dp, attr))
+
+    monkeypatch.setitem(sys.modules, "pyspark.pipelines", fake_dp_module)
+
     from pyspark.sql import functions as F
 
     exec_env = {"dp": rec_dp, "spark": proxy_spark, "F": F}
