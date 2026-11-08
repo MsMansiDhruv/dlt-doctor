@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dedupes candidate records by primary key (`QUALIFY row_number() OVER (PARTITION BY ... ORDER BY _quarantined_at DESC) = 1`).
   - Evaluates rule and partition filters after deduplication to ensure older stale failures are not mistakenly replayed.
   - Literal partition pruning predicates placed directly inside `MERGE ON` clauses for targeted partition scans.
-  - Opt-in `erasure_table` anti-join guard with optional `erasure_partition_col`.
+  - Required tombstone anti-join guard: either `erasure_table` or explicit `allow_resurrection=True` is required to protect against replaying compliance-deleted records, with optional `erasure_partition_col`.
   - Optional `mark_replayed` injecting `current_timestamp() AS _replayed_at`.
 - **Streaming CDC Enhancements (`dlt-doctor cdc`)**:
   - Support for composite match keys and explicit `sequence_col` ordering.
@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Event Log Metric Retention**: Retain-only `@expect_all` and `@expect` warn decorators are attached to both the clean table and the quarantine table rather than the shared intermediate staging view, preventing metric loss and double-counting in Databricks event logs.
-- **Deterministic Evaluation**: Replaced hardcoded default table names with strict validation across `expectations.py`, `cdc.py`, and `reconciler.py`.
+- **Explicit Contract Validation**: Replaced hardcoded default table names with strict validation across `expectations.py`, `cdc.py`, and `reconciler.py`.
 - **Modular CLI Architecture**: Replaced monolithic CLI dispatch with individual command handlers under `dlt_doctor.cli`.
 - **Lazy Extension Loading**: Interactive cell magic (`load_ipython_extension`) is lazily registered to eliminate unnecessary runtime dependencies.
 

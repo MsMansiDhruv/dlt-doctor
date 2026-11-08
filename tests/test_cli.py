@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from dlt_doctor.cli import main
 
 
@@ -743,3 +745,88 @@ def test_cli_analyze_fix_honors_per_file_ignores(tmp_path: Path) -> None:
         assert main() == 0
 
     assert pipe.read_text(encoding="utf-8") == original_code
+
+
+def test_cli_replay_partition_val_typed(capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI replay must cast partition_val based on --partition-val-type."""
+    # 1. Integer partition value
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "replay",
+            "--quarantine",
+            "main.bronze.orders_quarantine",
+            "--target",
+            "main.silver.orders",
+            "--keys",
+            "id",
+            "--valid-filter",
+            "amount > 0",
+            "--allow-resurrection",
+            "--partition-col",
+            "batch_id",
+            "--partition-val",
+            "42",
+            "--partition-val-type",
+            "int",
+        ],
+    ):
+        assert main() == 0
+
+    out = capsys.readouterr().out
+    assert "target.batch_id = 42" in out
+    assert "target.batch_id = '42'" not in out
+
+    # 2. Boolean partition value
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "replay",
+            "--quarantine",
+            "main.bronze.orders_quarantine",
+            "--target",
+            "main.silver.orders",
+            "--keys",
+            "id",
+            "--valid-filter",
+            "amount > 0",
+            "--allow-resurrection",
+            "--partition-col",
+            "is_active",
+            "--partition-val",
+            "true",
+            "--partition-val-type",
+            "bool",
+        ],
+    ):
+        assert main() == 0
+
+    out_bool = capsys.readouterr().out
+    assert "target.is_active = true" in out_bool
+
+    # 3. Invalid integer partition value exits 2
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "replay",
+            "--quarantine",
+            "main.bronze.orders_quarantine",
+            "--target",
+            "main.silver.orders",
+            "--keys",
+            "id",
+            "--valid-filter",
+            "amount > 0",
+            "--allow-resurrection",
+            "--partition-col",
+            "batch_id",
+            "--partition-val",
+            "not_an_int",
+            "--partition-val-type",
+            "int",
+        ],
+    ):
+        assert main() == 2
