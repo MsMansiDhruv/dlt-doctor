@@ -430,3 +430,77 @@ def test_pyspark_integration_dp_flavor_pipeline_execution(
     assert len(clean_rows) + len(quarantine_rows) == 4
     assert [(r.id, r.amount) for r in clean_rows] == [(1, 100)]
     assert len(quarantine_rows) == 3
+
+
+def test_warn_rules_attached_to_both_clean_and_quarantine() -> None:
+    """ExpectationDoctor must attach warn expectations (@expect) to both clean and quarantine tables."""
+    doctor = ExpectationDoctor()
+    rules = [
+        ExpectationRule("valid_id", "id IS NOT NULL", action_on_failure="quarantine"),
+        ExpectationRule("warn_amt", "amount < 1000", action_on_failure="warn"),
+    ]
+    plan = doctor.build_quarantine_routing("silver_orders", rules)
+    code = doctor.generate_pipeline_code(plan, source_table="bronze_orders", flavor="dlt")
+
+    clean_idx = code.index("def silver_orders():")
+    clean_section = code[:clean_idx]
+    assert '@dlt.expect("warn_amt", "amount < 1000")' in clean_section
+
+    quar_idx = code.index("def silver_orders_quarantine():")
+    quar_section = code[clean_idx:quar_idx]
+    assert '@dlt.expect("warn_amt", "amount < 1000")' in quar_section
+
+
+@pytest.mark.integration
+def test_pyspark_integration_warn_expectations_executed(
+    spark: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execute pipeline with warn rules and verify decorator tracking on clean and quarantine."""
+    data = [(1, 100), (2, -5), (3, 5000)]
+    source_df = spark.createDataFrame(data, ["id", "amount"])
+
+    doctor = ExpectationDoctor()
+    rules = [
+        ExpectationRule("valid_amount", "amount > 0", action_on_failure="quarantine"),
+        ExpectationRule("warn_tier", "amount < 1000", action_on_failure="warn"),
+    ]
+    plan = doctor.build_quarantine_routing("orders_clean", rules)
+    code = doctor.generate_pipeline_code(plan, source_table="orders_raw", flavor="dp")
+
+    recorded: dict[str, list[tuple[str, tuple, dict]]] = {"clean": [], "quar": []}
+
+    class RecordingDP(StubDP):
+        def expect(self, *args: Any, **kwargs: Any) -> Any:
+            def dec(fn: Any) -> Any:
+                if fn.__name__ == "orders_clean":
+                    recorded["clean"].append(("expect", args, kwargs))
+                elif fn.__name__ == "orders_clean_quarantine":
+                    recorded["quar"].append(("expect", args, kwargs))
+                return fn
+
+            return dec
+
+    tables: dict[str, Any] = {"orders_raw": source_df}
+    proxy_spark = ProxySpark(tables)
+    rec_dp = RecordingDP(tables)
+
+    from pyspark.sql import functions as F
+
+    exec_env = {"dp": rec_dp, "spark": proxy_spark, "F": F}
+    exec(code, exec_env)
+
+    staged_df = exec_env["orders_clean_staged"]()
+    tables["orders_clean_staged"] = staged_df
+    clean_df = exec_env["orders_clean"]()
+    quar_df = exec_env["orders_clean_quarantine"]()
+
+    clean_rows = clean_df.collect()
+    quar_rows = quar_df.collect()
+
+    assert len(clean_rows) == 2
+    assert len(quar_rows) == 1
+
+    clean_warns = [args for name, args, _ in recorded["clean"] if name == "expect"]
+    quar_warns = [args for name, args, _ in recorded["quar"] if name == "expect"]
+    assert ("warn_tier", "amount < 1000") in clean_warns
+    assert ("warn_tier", "amount < 1000") in quar_warns
