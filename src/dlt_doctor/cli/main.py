@@ -29,11 +29,19 @@ from dlt_doctor.cli import (
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct command-line argument parser with all registered subcommands."""
+    from dlt_doctor import __version__
+
     parser = argparse.ArgumentParser(
         prog="dlt-doctor",
         description="Production optimization and quality engine for Databricks Lakeflow, DLT, and PySpark",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show program's version number and exit",
+    )
 
     analyze.register_parser(subparsers)
     heal.register_parser(subparsers)

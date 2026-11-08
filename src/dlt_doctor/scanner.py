@@ -177,7 +177,7 @@ class DirectoryAuditReport:
                     "tool": {
                         "driver": {
                             "name": "dlt-doctor",
-                            "version": "0.5.0.dev0",
+                            "version": "0.5.0",
                             "rules": list(rules_map.values()),
                         }
                     },

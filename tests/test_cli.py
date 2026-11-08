@@ -830,3 +830,12 @@ def test_cli_replay_partition_val_typed(capsys: pytest.CaptureFixture[str]) -> N
         ],
     ):
         assert main() == 2
+
+
+def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """dlt-doctor --version prints version and exits cleanly."""
+    with pytest.raises(SystemExit) as exc, patch("sys.argv", ["dlt-doctor", "--version"]):
+        main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "dlt-doctor" in out
