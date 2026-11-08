@@ -644,3 +644,102 @@ regulated_tables = ["silver_orders"]
         ["dlt-doctor", "heal", str(sql_file), "--check", "--config", str(cfg_file)],
     ):
         assert main() == 3
+
+
+def test_cli_analyze_fix_honors_config_ignore(tmp_path: Path) -> None:
+    """analyze --fix must honor ignore rules in config without making changes."""
+    pipe = tmp_path / "orders.py"
+    original_code = (
+        "import dlt\n"
+        "@dlt.table\n"
+        '@dlt.expect_or_drop("v1", "x > 0")\n'
+        "def orders():\n"
+        '    return dlt.read_stream("s")\n'
+    )
+    pipe.write_text(original_code, encoding="utf-8")
+
+    cfg_file = tmp_path / "custom.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor]
+ignore = ["DD001"]
+""",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "analyze",
+            str(pipe),
+            "--fix",
+            "--write",
+            "--config",
+            str(cfg_file),
+        ],
+    ):
+        assert main() == 0
+
+    # Code on disk unchanged because rule was ignored
+    assert pipe.read_text(encoding="utf-8") == original_code
+
+
+def test_cli_analyze_fix_honors_inline_suppression(tmp_path: Path) -> None:
+    """analyze --fix must honor inline suppression comments without modifying file."""
+    pipe = tmp_path / "suppressed.py"
+    original_code = (
+        "# dlt-doctor: ignore[DD001]\n"
+        "import dlt\n"
+        "@dlt.table\n"
+        '@dlt.expect_or_drop("v1", "x > 0")\n'
+        "def suppressed():\n"
+        '    return dlt.read_stream("s")\n'
+    )
+    pipe.write_text(original_code, encoding="utf-8")
+
+    with patch(
+        "sys.argv",
+        ["dlt-doctor", "analyze", str(pipe), "--fix", "--write"],
+    ):
+        assert main() == 0
+
+    assert pipe.read_text(encoding="utf-8") == original_code
+
+
+def test_cli_analyze_fix_honors_per_file_ignores(tmp_path: Path) -> None:
+    """analyze --fix must honor per_file_ignores with path globs."""
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir()
+    pipe = legacy_dir / "old_pipe.py"
+    original_code = (
+        "import dlt\n"
+        "@dlt.table\n"
+        '@dlt.expect_or_drop("v1", "x > 0")\n'
+        "def old_pipe():\n"
+        '    return dlt.read_stream("s")\n'
+    )
+    pipe.write_text(original_code, encoding="utf-8")
+
+    cfg_file = tmp_path / "custom.toml"
+    cfg_file.write_text(
+        """[tool.dlt-doctor.per_file_ignores]
+"legacy/*" = ["DD001"]
+""",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "sys.argv",
+        [
+            "dlt-doctor",
+            "analyze",
+            str(pipe),
+            "--fix",
+            "--write",
+            "--config",
+            str(cfg_file),
+        ],
+    ):
+        assert main() == 0
+
+    assert pipe.read_text(encoding="utf-8") == original_code

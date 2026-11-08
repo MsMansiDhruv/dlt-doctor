@@ -44,8 +44,10 @@ class DoctorConfig:
         base_name = Path(file_name).name
         for pattern, ignored_rules in self.per_file_ignores.items():
             normalized_pattern = pattern.replace("\\", "/")
-            matches = fnmatch.fnmatch(normalized_file, normalized_pattern) or fnmatch.fnmatch(
-                base_name, normalized_pattern
+            matches = (
+                fnmatch.fnmatch(normalized_file, normalized_pattern)
+                or fnmatch.fnmatch(normalized_file, f"*/{normalized_pattern.lstrip('/')}")
+                or fnmatch.fnmatch(base_name, normalized_pattern)
             )
             if matches and rule_upper in [i.upper() for i in ignored_rules]:
                 return False
