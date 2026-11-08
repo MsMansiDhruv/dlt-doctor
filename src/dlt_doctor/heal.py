@@ -281,7 +281,7 @@ def auto_heal_source(
 
     collected_warnings: list[str] = []
 
-    if config and not config.is_rule_enabled("DD001", Path(file_path).name):
+    if config and not config.is_rule_enabled("DD001", file_path):
         return HealResult(
             original_code=source_code,
             healed_code=source_code,

@@ -38,11 +38,18 @@ class DoctorConfig:
             return False
         if rule_upper in [i.upper() for i in self.ignore]:
             return False
-        return not (
-            file_name
-            and file_name in self.per_file_ignores
-            and rule_upper in [i.upper() for i in self.per_file_ignores[file_name]]
-        )
+        if not file_name or not self.per_file_ignores:
+            return True
+        normalized_file = file_name.replace("\\", "/")
+        base_name = Path(file_name).name
+        for pattern, ignored_rules in self.per_file_ignores.items():
+            normalized_pattern = pattern.replace("\\", "/")
+            matches = fnmatch.fnmatch(normalized_file, normalized_pattern) or fnmatch.fnmatch(
+                base_name, normalized_pattern
+            )
+            if matches and rule_upper in [i.upper() for i in ignored_rules]:
+                return False
+        return True
 
     def get_severity(self, rule_id: str, default: DiagnosticSeverity) -> DiagnosticSeverity:
         """Get severity of a rule with config overrides applied."""

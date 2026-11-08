@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 from dlt_doctor.config import DoctorConfig, load_config
@@ -51,7 +54,11 @@ def _discover_heal_files(target: Path) -> list[Path]:
     discovered: list[Path] = []
     for path in target.rglob("*"):
         if path.is_file():
-            if any(part in IGNORED_DIRECTORIES for part in path.parts):
+            try:
+                rel_parts = path.relative_to(target).parts[:-1]
+            except ValueError:
+                rel_parts = path.parts[:-1]
+            if any(part in IGNORED_DIRECTORIES for part in rel_parts):
                 continue
             if path.suffix.lower() in {".py", ".sql"}:
                 discovered.append(path)
@@ -59,11 +66,12 @@ def _discover_heal_files(target: Path) -> list[Path]:
 
 
 def _check_sql_file_compliance(
-    file_path: Path, content: str, config: DoctorConfig
+    file_path: Path, content: str, config: DoctorConfig, rel_path: str | None = None
 ) -> tuple[bool, str]:
     """Check SQL pipeline compliance for ON VIOLATION DROP ROW, honoring suppressions."""
     # 1. Config rule enablement check
-    if not config.is_rule_enabled("DD001", file_path.name):
+    target_path = rel_path or file_path.name
+    if not config.is_rule_enabled("DD001", target_path):
         return True, ""
 
     # 2. Inline comments (-- dlt-doctor: ignore[DD001] or # dlt-doctor: ignore[DD001])
@@ -86,24 +94,35 @@ def _check_sql_file_compliance(
                     if "DD001" in rules or "ALL" in rules:
                         return True, ""
 
-    # 3. Detect ON VIOLATION DROP ROW
-    if re.search(r"\bON\s+VIOLATION\s+DROP\s+ROW\b", content, re.IGNORECASE):
-        # If explicit regulated_tables configured, verify table matches
-        if config.has_explicit_regulated_tables:
-            m = re.search(
-                r"CREATE\s+(?:OR\s+REFRESH\s+)?(?:STREAMING\s+)?TABLE\s+([A-Za-z0-9_\.]+)",
-                content,
-                re.IGNORECASE,
-            )
-            if m:
-                tbl = m.group(1).split(".")[-1]
-                if not config.is_regulated_table(tbl):
-                    return True, ""
+    # 3. Detect table statements and evaluate violations per table
+    table_pattern = re.compile(
+        r"CREATE\s+(?:OR\s+REFRESH\s+)?(?:STREAMING\s+)?TABLE\s+([A-Za-z0-9_\.]+)",
+        re.IGNORECASE,
+    )
+    table_matches = list(table_pattern.finditer(content))
 
-        return (
-            False,
-            "Cannot auto-heal SQL pipeline: ON VIOLATION DROP ROW requires manual migration to dual-table quarantine.",
-        )
+    if not table_matches:
+        if re.search(r"\bON\s+VIOLATION\s+DROP\s+ROW\b", content, re.IGNORECASE):
+            return (
+                False,
+                "Cannot auto-heal SQL pipeline: ON VIOLATION DROP ROW requires manual migration to dual-table quarantine.",
+            )
+        return True, ""
+
+    for i, m in enumerate(table_matches):
+        tbl_full = m.group(1)
+        tbl_name = tbl_full.split(".")[-1]
+        start_pos = m.start()
+        end_pos = table_matches[i + 1].start() if i + 1 < len(table_matches) else len(content)
+        chunk = content[start_pos:end_pos]
+
+        if re.search(r"\bON\s+VIOLATION\s+DROP\s+ROW\b", chunk, re.IGNORECASE):
+            if config.has_explicit_regulated_tables and not config.is_regulated_table(tbl_name):
+                continue
+            return (
+                False,
+                f"Cannot auto-heal SQL pipeline: ON VIOLATION DROP ROW in table '{tbl_name}' requires manual migration to dual-table quarantine.",
+            )
 
     return True, ""
 
@@ -129,6 +148,7 @@ def handle(args: argparse.Namespace) -> int:
             print(f"File {target.name} is not a supported pipeline format (.py or .sql)")
         return 0
 
+    config_root = config_target if config_target.is_dir() else config_target.parent
     write_mode = args.write and not args.check
 
     # Compute all results in memory first to prevent partial application in write mode
@@ -138,13 +158,20 @@ def handle(args: argparse.Namespace) -> int:
 
     for f in files:
         try:
+            rel_file_path = str(f.relative_to(config_root)).replace("\\", "/")
+        except ValueError:
+            rel_file_path = str(f).replace("\\", "/")
+
+        try:
             content = f.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
             cannot_heal.append((f, f"Cannot decode file as UTF-8: {exc}"))
             continue
 
         if f.suffix.lower() == ".sql":
-            can_heal, reason = _check_sql_file_compliance(f, content, config)
+            can_heal, reason = _check_sql_file_compliance(
+                f, content, config, rel_path=rel_file_path
+            )
             if not can_heal:
                 cannot_heal.append((f, reason))
             else:
@@ -153,7 +180,7 @@ def handle(args: argparse.Namespace) -> int:
 
         res = auto_heal_source(
             content,
-            file_path=f.name,
+            file_path=rel_file_path,
             quarantine_suffix=args.quarantine_suffix,
             config=config,
         )
@@ -183,9 +210,34 @@ def handle(args: argparse.Namespace) -> int:
             return 1
 
         if write_mode:
-            # Safely apply writes now that all files have been validated
+            # Safely apply writes with line ending preservation and atomic rename
             for f, res in needs_healing:
-                f.write_text(res.healed_code, encoding="utf-8")
+                raw_bytes = f.read_bytes()
+                target_newline = "\r\n" if b"\r\n" in raw_bytes else "\n"
+
+                # Normalize healed code to preserve original line endings
+                normalized_code = res.healed_code.replace("\r\n", "\n")
+                if target_newline == "\r\n":
+                    normalized_code = normalized_code.replace("\n", "\r\n")
+
+                temp_file: Path | None = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        mode="w",
+                        encoding="utf-8",
+                        newline="",
+                        dir=f.parent,
+                        delete=False,
+                    ) as tmp:
+                        tmp.write(normalized_code)
+                        temp_file = Path(tmp.name)
+                    os.replace(temp_file, f)
+                except Exception:
+                    if temp_file and temp_file.exists():
+                        with contextlib.suppress(OSError):
+                            temp_file.unlink()
+                    raise
+
                 print(f"Applied zero-loss quarantine routing to {f.name}:\n{res.diff}")
             return 0
 
