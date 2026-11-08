@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Database",
     "Topic :: Software Development :: Quality Assurance",
     "Typing :: Typed",
@@ -41,6 +42,10 @@ dev = [
     "bandit>=1.7.0",
     "mypy>=1.8.0",
     "build>=1.0.0",
+]
+spark = [
+    "pyspark>=3.5.0",
+    "delta-spark>=3.0.0",
 ]
 
 [project.scripts]
