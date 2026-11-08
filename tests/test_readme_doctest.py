@@ -16,10 +16,19 @@ def test_readme_act1_execution() -> None:
     # 1. Statically audit PySpark code
     doctor = PlanDoctor()
     findings = doctor.analyze_source_code("""
+from pyspark.sql import functions as F
+from pyspark.sql.functions import udf
+
+@udf
+def clean_it(x):
+    return x.strip() if x else None
+
 df_clean = (
     df.withColumn("c1", F.col("a"))
       .withColumn("c2", F.col("b"))
-      .withColumn("clean_val", my_python_udf(F.col("raw")))
+      .withColumn("c3", F.col("c"))
+      .withColumn("c4", F.col("d"))
+      .withColumn("clean_val", clean_it(F.col("raw")))
       .repartition(4)
 )
 """)
@@ -27,6 +36,7 @@ df_clean = (
     scorecard_html = AdvisorDoctor().to_databricks_html(report)
     assert scorecard_html is not None
     assert len(scorecard_html) > 0
+    assert len(findings) >= 3
 
     # 2. Audit Auto Loader ingestion stream progress
     al_doctor = AutoLoaderDoctor()
@@ -145,3 +155,67 @@ def test_readme_python_blocks_are_syntactically_valid() -> None:
                     ) from exc
         elif in_python_block:
             current_block.append(line)
+
+
+def test_readme_cli_commands_parse_cleanly(tmp_path: Path) -> None:
+    """Extract all `dlt-doctor ...` commands from README.md and verify they parse and validate cleanly."""
+    import shlex
+
+    from dlt_doctor.cli import build_parser
+
+    readme_path = Path(__file__).parent.parent / "README.md"
+    content = readme_path.read_text(encoding="utf-8")
+    parser = build_parser()
+
+    # Extract all lines beginning with dlt-doctor
+    cli_lines: list[str] = []
+    for line in content.splitlines():
+        line_clean = line.strip()
+        if line_clean.startswith("dlt-doctor "):
+            cli_lines.append(line_clean)
+
+    assert len(cli_lines) >= 10, (
+        f"Expected at least 10 CLI examples in README, found {len(cli_lines)}"
+    )
+
+    # Mock sample files for commands taking paths
+    mock_py = tmp_path / "mock_pipe.py"
+    mock_py.write_text("import dlt\n@dlt.table\ndef t(): return dlt.read('s')\n", encoding="utf-8")
+    mock_sql = tmp_path / "mock_pipe.sql"
+    mock_sql.write_text("SELECT 1;\n", encoding="utf-8")
+    mock_nb = tmp_path / "mock_nb.ipynb"
+    mock_nb.write_text('{"cells": []}', encoding="utf-8")
+    mock_dir = tmp_path / "pipes"
+    mock_dir.mkdir()
+
+    for cmd in cli_lines:
+        tokens = shlex.split(cmd)
+        assert tokens[0] == "dlt-doctor"
+        args_list = tokens[1:]
+
+        # Normalize placeholders or demo paths to local temp mocks
+        normalized_args: list[str] = []
+        for token in args_list:
+            if "<warehouse_id>" in token:
+                normalized_args.append("mock_wh_12345")
+            elif token.endswith(".py"):
+                normalized_args.append(str(mock_py))
+            elif token.endswith(".sql"):
+                normalized_args.append(str(mock_sql))
+            elif token.endswith(".ipynb"):
+                normalized_args.append(str(mock_nb))
+            elif token in {"src/pipelines", "src/pipelines/"}:
+                normalized_args.append(str(mock_dir))
+            else:
+                normalized_args.append(token)
+
+        # 1. Parsing must succeed with zero SystemExit/argparse errors
+        parsed = parser.parse_args(normalized_args)
+        assert parsed is not None, f"Failed to parse CLI command: {cmd}"
+
+        # 2. For pure SQL generators and local utilities, verify execution exits 0
+        from dlt_doctor.cli import main
+
+        if parsed.command in {"rules", "explain", "restate", "cdc", "replay", "cost"}:
+            exit_code = main(normalized_args)
+            assert exit_code == 0, f"Command '{cmd}' returned non-zero exit code: {exit_code}"

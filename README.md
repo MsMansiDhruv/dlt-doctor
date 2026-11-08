@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/dlt-doctor-mascot.svg" alt="dlt-doctor visual identity" width="100%" />
+<img src="https://raw.githubusercontent.com/MsMansiDhruv/dlt-doctor/main/assets/dlt-doctor-mascot.svg" alt="dlt-doctor visual identity" width="100%" />
 
 <p align="center">
   <strong>Production Optimization Engine and Quality Accelerator for Databricks Lakeflow Spark Declarative Pipelines, DLT, and PySpark</strong>
@@ -11,7 +11,7 @@
 [![Runtime](https://img.shields.io/badge/Runtime-Databricks%20%7C%20Spark%203.5+-FF9B4A?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org/)
 [![Storage](https://img.shields.io/badge/Storage-Delta%20Lake%20%26%20CDF-2EE6A7?style=for-the-badge&logo=delta&logoColor=white)](https://delta.io/)
 [![Governance](https://img.shields.io/badge/Governance-Unity%20Catalog-0E1726?style=for-the-badge&logo=databricks&logoColor=2EE6A7)](https://www.databricks.com/product/unity-catalog)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/blob/main/LICENSE)
 [![CI](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml)
 
 <p align="center">
@@ -40,7 +40,7 @@ It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot
 
 `dlt-doctor` is the antidote:
 - **Zero cluster spend**: Statically audits your PySpark AST and configurations locally or inside CI before code merges.
-- **Zero silent data loss**: Intercepts destructive `expect_or_drop` policies and synthesizes complete, disjoint, three-valued-logic NULL-safe single-pass quarantine streams via `dlt-doctor heal`.
+- **Helps prevent silent data loss**: Intercepts destructive `expect_or_drop` policies and synthesizes complete, disjoint, three-valued-logic NULL-safe single-pass quarantine streams via `dlt-doctor heal`.
 - **Surgical healing**: Calculates bounded late-data partition blast radii to restate historical rolling windows without full-table scans.
 
 ---
@@ -50,7 +50,7 @@ It is 2 AM. Your streaming pipeline crashes with `DeltaAnalysisException: Cannot
 <div align="center">
 
 <a href="https://github.com/MsMansiDhruv/dlt-doctor/blob/main/assets/dlt-doctor-showcase.mp4">
-  <img src="./assets/dlt-doctor-showcase.gif" alt="dlt-doctor product showcase animated preview" width="100%" />
+  <img src="https://raw.githubusercontent.com/MsMansiDhruv/dlt-doctor/main/assets/dlt-doctor-showcase.gif" alt="dlt-doctor product showcase animated preview" width="100%" />
 </a>
 
 <p align="center">
@@ -69,7 +69,7 @@ Measured on an AMD Ryzen 7 5800H (16 vCPUs, 3.2GHz, 16GB RAM) running Python 3.1
 
 | Benchmark Task | Workload Scale | Measured Latency | Throughput |
 | :--- | :--- | :--- | :--- |
-| **Single-Pass Heal** | 10 DLT expectation tables | 4.2 ms | **Sub-5ms code synthesis** |
+| **Single-Pass Heal** | 10 DLT expectation tables | 4.2 ms | **Sub-5ms per table code synthesis** |
 | **Multi-File Directory Scan** | 25 pipeline source files | 35.9 ms | **~700 files/sec** |
 
 ---
@@ -78,11 +78,10 @@ Measured on an AMD Ryzen 7 5800H (16 vCPUs, 3.2GHz, 16GB RAM) running Python 3.1
 
 | Architectural Dimension | Native Lakeflow / DLT | DQX / Great Expectations | Commercial SaaS (Monte Carlo / Anomalo) | dlt-doctor |
 | :--- | :--- | :--- | :--- | :--- |
-| **Cluster Cost** | Standard DLT compute | Executes assertions inside Spark tasks | Queries live tables post-run | **Zero cluster cost** (runs offline via AST in <5ms) |
+| **Cluster Cost** | Standard DLT compute | Executes assertions inside Spark tasks | Queries live tables post-run | **Zero cluster cost** (runs offline via AST in <5ms per file) |
 | **Data Loss Prevention** | `expect_or_drop` purges rows without persisting payloads | Supports quarantine routing in DQX (runtime compute); GE typically halts or warns | Read-only alerting after corruption lands | **Single-pass NULL-safe quarantine routing** |
 | **Actionability** | Log metrics to event log | Assertion logs | Slack / PagerDuty alert notifications | **Automated code synthesis (`dlt-doctor heal`)** |
 | **Code Inspection** | None (runtime engine) | Runtime dataframe assertions | Black-box table polling | **Deep AST inspection (UDFs, cascades, spills)** |
-| **Late Data Backfills** | Full pipeline backfill | None | Alerts on freshness lag | **Partition blast-radius restatement SQL** |
 | **Licensing** | Databricks runtime license | Open Source library | Commercial proprietary license | **100% Free & Open Source (Apache 2.0)** |
 
 ---
@@ -123,7 +122,7 @@ All diagnostic rules are managed in `dlt_doctor.rules` and queryable via `dlt-do
 
 <div align="center">
 
-<img src="./assets/dlt-doctor-terminal.svg" alt="dlt-doctor terminal CLI audit screenshot" width="100%" />
+<img src="https://raw.githubusercontent.com/MsMansiDhruv/dlt-doctor/main/assets/dlt-doctor-terminal.svg" alt="dlt-doctor terminal CLI audit screenshot" width="100%" />
 
 </div>
 
@@ -133,7 +132,7 @@ All diagnostic rules are managed in `dlt_doctor.rules` and queryable via `dlt-do
 
 ### Interactive Walkthrough Notebook
 
-Import [`notebooks/01_dlt_doctor_walkthrough.ipynb`](./notebooks/01_dlt_doctor_walkthrough.ipynb) directly into your Databricks workspace to run the interactive cell magic and AST optimizers live on your cluster.
+Import [`notebooks/01_dlt_doctor_walkthrough.ipynb`](https://github.com/MsMansiDhruv/dlt-doctor/blob/main/notebooks/01_dlt_doctor_walkthrough.ipynb) directly into your Databricks workspace to run the interactive cell magic and AST optimizers live on your cluster.
 
 ### 1. Installation
 
@@ -193,7 +192,7 @@ dlt-doctor restate --table main.gold.orders --late-date 2026-10-25 --window 7 --
 dlt-doctor cdc --table main.silver.customers --keys customer_id --event-time updated_at
 
 # Generate idempotent replay SQL to reprocess quarantined records
-dlt-doctor replay --quarantine-table main.silver.orders_quarantine --target-table main.silver.orders --keys order_id --allow-resurrection
+dlt-doctor replay --quarantine-table main.silver.orders_quarantine --target-table main.silver.orders --keys order_id --valid-filter "amount > 0" --erasure-table main.silver.orders_tombstones
 
 # Audit legacy DBFS mounts and two-tier Hive Metastore references for Unity Catalog
 dlt-doctor uc-migrate src/pipelines/orders.py --catalog prod_lakehouse --schema bronze
@@ -379,7 +378,7 @@ REQUIRE_SPARK=1 pytest -m integration -rs -v
 
 All source code is audited with `ruff check src tests`, type-checked with `mypy src`, and verified against security vulnerabilities with `bandit -r src`.
 
-For environment setup (including Windows `JAVA_HOME` and Hadoop binaries) and contributor guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For environment setup (including Windows `JAVA_HOME` and Hadoop binaries) and contributor guidelines, see [CONTRIBUTING.md](https://github.com/MsMansiDhruv/dlt-doctor/blob/main/CONTRIBUTING.md).
 
 ---
 
@@ -388,7 +387,7 @@ For environment setup (including Windows `JAVA_HOME` and Hadoop binaries) and co
 - **Static AST Analysis**: Static analysis inspects source AST without cluster execution. Dynamic constructs (e.g. `eval()`, runtime-generated expectation dicts, or dynamic SQL queries) cannot be resolved statically (emits `DD003` INFO).
 - **SQL Pipeline Auto-Heal**: `dlt-doctor heal` synthesizes Python AST definitions. SQL pipelines using `ON VIOLATION DROP ROW` must be manually migrated to dual-table quarantine structures.
 - **Derived Non-Deterministic Rules**: Expectation conditions referencing runtime boundary calls (such as `current_date()`) emit a warning (`UserWarning`) because records evaluated near midnight boundaries may evaluate differently upon replay.
-- **Configuration**: Audits and CI gates can be customized using `pyproject.toml` or `dlt-doctor.toml`. For complete options, see the [Configuration Guide](docs/configuration.md) and [Limitations Guide](docs/limitations.md).
+- **Configuration**: Audits and CI gates can be customized using `pyproject.toml` or `dlt-doctor.toml`. For complete options, see the [Configuration Guide](https://msmansidhruv.github.io/dlt-doctor/configuration/) and [Limitations Guide](https://msmansidhruv.github.io/dlt-doctor/limitations/).
 
 ---
 
@@ -400,7 +399,7 @@ For environment setup (including Windows `JAVA_HOME` and Hadoop binaries) and co
 
 ## License
 
-Distributed under the Apache 2.0 License. See [LICENSE](LICENSE) for details.
+Distributed under the Apache 2.0 License. See [LICENSE](https://github.com/MsMansiDhruv/dlt-doctor/blob/main/LICENSE) for details.
 
 <div align="center">
   <sub>Built by <a href="https://github.com/MsMansiDhruv">Mansi Dhruv</a> • Production Databricks &amp; Delta Lake Engineering</sub>
