@@ -362,6 +362,31 @@ if vac_report.safety_level.value != "DANGEROUS":
 
 ---
 
+## Model Context Protocol (MCP) Server
+
+Run `dlt-doctor` as a zero-dependency **MCP stdio server** for Claude Desktop, Cursor, VS Code, or Antigravity:
+
+```json
+{
+  "mcpServers": {
+    "dlt-doctor": {
+      "command": "dlt-doctor",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Exposed MCP Tools & Resources:**
+* `analyze_pyspark_source` — Static AST audit of PySpark / DLT Python code for Catalyst bloat, skew, and missing quarantine gates.
+* `analyze_sql_source` — Databricks SQL / DLT SQL quality & expectation auditing.
+* `scan_pipeline_directory` — Recursive repository scan returning structured JSON findings.
+* `forecast_dbu_cost` — Classic vs. Serverless DBU burn rate and cluster sizing advisor.
+* `audit_compaction_debt` — Delta small-file fragmentation audit and targeted `OPTIMIZE` SQL generation.
+* `dlt-doctor://rules` *(Resource)* — Live catalog of all registered diagnostic rules.
+
+---
+
 ## Verification & Test Suite
 
 The test suite validates all diagnostic engines and integration components across Python 3.10, 3.11, and 3.12:
