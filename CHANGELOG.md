@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-17
+
+### Added
+- **Model Context Protocol (MCP) Server (`dlt-doctor mcp`)**: Zero-dependency JSON-RPC 2.0 stdio server (`dlt_doctor.mcp_server`) exposing `analyze_pyspark_source`, `analyze_sql_source`, `scan_pipeline_directory`, `forecast_dbu_cost`, `audit_compaction_debt`, and the `dlt-doctor://rules` resource for Claude Desktop, Cursor, VS Code, and Antigravity.
+
 ## [0.5.0] - 2026-11-07
 
 ### Breaking
