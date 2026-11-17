@@ -17,6 +17,7 @@ from dlt_doctor.cli import (
     heal,
     history,
     inspect_table,
+    mcp,
     replay,
     restate,
     rules,
@@ -60,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     history.register_parser(subparsers)
     inspect_table.register_parser(subparsers)
     uc_migrate.register_parser(subparsers)
+    mcp.register_parser(subparsers)
 
     return parser
 
@@ -91,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         "history": history.handle,
         "inspect-table": inspect_table.handle,
         "uc-migrate": uc_migrate.handle,
+        "mcp": mcp.handle,
     }
 
     handler = handlers.get(args.command)
