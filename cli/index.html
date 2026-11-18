@@ -18,7 +18,7 @@
         <link rel="prev" href="../benchmarks/">
       
       
-        <link rel="next" href="../interactive/">
+        <link rel="next" href="../mcp/">
       
       
         
@@ -293,6 +293,25 @@
     
   
   CLI & Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../mcp/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Model Context Protocol (MCP)
 
       </a>
     </li>
@@ -762,6 +781,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#14-model-context-protocol-mcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Model Context Protocol (mcp)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -771,6 +801,33 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Context Protocol (MCP)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -822,10 +879,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
             
   
   
@@ -843,8 +900,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1273,10 +1330,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
-          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
             
   
   
@@ -1294,8 +1351,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_7">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1602,6 +1659,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#14-model-context-protocol-mcp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Model Context Protocol (mcp)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1693,6 +1761,10 @@
 <h3 id="13-quarantine-replay-replay">13. Quarantine Replay (<code>replay</code>)</h3>
 <p>Generate idempotent Delta MERGE SQL to reprocess quarantined records into target tables:
 <div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>dlt-doctor<span class="w"> </span>replay<span class="w"> </span>--quarantine-table<span class="w"> </span>main.silver.orders_quarantine<span class="w"> </span>--target-table<span class="w"> </span>main.silver.orders<span class="w"> </span>--keys<span class="w"> </span>order_id
+</code></pre></div></p>
+<h3 id="14-model-context-protocol-mcp">14. Model Context Protocol (<code>mcp</code>)</h3>
+<p>Launch zero-dependency JSON-RPC 2.0 stdio server for Claude Desktop, Cursor, and agentic IDEs:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>dlt-doctor<span class="w"> </span>mcp
 </code></pre></div></p>
 
 
