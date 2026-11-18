@@ -15,11 +15,13 @@ Databricks Auto Loader (`cloudFiles`) incrementally ingests landing files. When 
 from dlt_doctor import AutoLoaderDoctor
 
 doctor = AutoLoaderDoctor()
-health = doctor.diagnose_stream_progress({
-    "numInputRows": 50000,
-    "inputRowsPerSecond": 1200.0,
-    "processedRowsPerSecond": 450.0,  # Stream falling behind
-})
+health = doctor.diagnose_stream_progress(
+    {
+        "numInputRows": 50000,
+        "inputRowsPerSecond": 1200.0,
+        "processedRowsPerSecond": 450.0,  # Stream falling behind
+    }
+)
 
 if health.is_backpressured:
     print(f"Backpressure detected! Estimated backlog: ~{health.estimated_backlog_rows:,} rows.")

@@ -11,6 +11,7 @@
 [![Runtime](https://img.shields.io/badge/Runtime-Databricks%20%7C%20Spark%203.5+-FF9B4A?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org/)
 [![Storage](https://img.shields.io/badge/Storage-Delta%20Lake%20%26%20CDF-2EE6A7?style=for-the-badge&logo=delta&logoColor=white)](https://delta.io/)
 [![Governance](https://img.shields.io/badge/Governance-Unity%20Catalog-0E1726?style=for-the-badge&logo=databricks&logoColor=2EE6A7)](https://www.databricks.com/product/unity-catalog)
+[![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://msmansidhruv.github.io/dlt-doctor/mcp/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/blob/main/LICENSE)
 [![CI](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml)
 
@@ -22,13 +23,14 @@
   <a href="#where-dlt-doctor-fits">Where It Fits</a> •
   <a href="#diagnostic-rules">Diagnostic Rules</a> •
   <a href="#quickstart">Quickstart</a> •
+  <a href="#model-context-protocol-mcp">MCP Server</a> •
   <a href="#production-walkthrough">Walkthrough</a>
 </p>
 
 </div>
 
 > [!NOTE]
-> **Beta Release (v0.5.0)**: `dlt-doctor` is in active beta. Interfaces and CLI contracts may evolve prior to v1.0.0. Feedback and contributions are welcome via [GitHub Issues](https://github.com/MsMansiDhruv/dlt-doctor/issues) and [Discussions](https://github.com/MsMansiDhruv/dlt-doctor/discussions).
+> **Beta Release (v0.6.0)**: `dlt-doctor` is in active beta. Interfaces and CLI contracts may evolve prior to v1.0.0. Feedback and contributions are welcome via [GitHub Issues](https://github.com/MsMansiDhruv/dlt-doctor/issues) and [Discussions](https://github.com/MsMansiDhruv/dlt-doctor/discussions).
 
 ---
 
@@ -155,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run dlt-doctor Quality Audit
-        uses: MsMansiDhruv/dlt-doctor@v0.5.0
+        uses: MsMansiDhruv/dlt-doctor@v0.6.0
         with:
           path: "src/pipelines"
           format: "text"
@@ -169,6 +171,9 @@ dlt-doctor analyze src/pipelines/orders_silver.py
 dlt-doctor analyze notebooks/01_ingest.ipynb
 dlt-doctor analyze src/pipelines/orders.sql
 dlt-doctor analyze src/pipelines --format markdown
+
+# Launch Model Context Protocol (MCP) stdio server for Claude, Cursor, and agentic workflows
+dlt-doctor mcp
 
 # Auto-heal expect_or_drop anti-patterns into single-pass quarantine streams (preview diff)
 dlt-doctor heal src/pipelines/orders_silver.py
@@ -230,6 +235,30 @@ df_orders = (
     .withColumn("status_clean", parse_status(F.col("status")))
 )
 ```
+
+### 5. Model Context Protocol (MCP) Server
+
+Run `dlt-doctor` as a native, zero-dependency stdio MCP server for **Claude Desktop**, **Cursor**, and agentic AI tools:
+
+```bash
+# 1-Click Install via Smithery
+npx -y @smithery/cli install dlt-doctor --client claude
+```
+
+Or configure manually in `claude_desktop_config.json` or `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "dlt-doctor": {
+      "command": "dlt-doctor",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Provides 5 diagnostic tools (`analyze_pyspark_source`, `analyze_sql_source`, `scan_pipeline_directory`, `forecast_dbu_cost`, `audit_compaction_debt`) and the `dlt-doctor://rules` catalog resource. See the [MCP Documentation](https://msmansidhruv.github.io/dlt-doctor/mcp/) for full protocol schemas.
 
 ---
 
@@ -335,15 +364,9 @@ spark.sql(scope.delta_merge_sql)
 cluster_rec = ClusterDoctor().advise_clustering(
     table_name="main.gold.fact_orders",
     columns=[
-        ColumnProfile(
-            "customer_id", "string", distinct_count=25000, filter_frequency_score=0.9
-        ),
-        ColumnProfile(
-            "order_date", "date", distinct_count=1800, filter_frequency_score=0.95
-        ),
-        ColumnProfile(
-            "order_uuid", "string", distinct_count=9900000
-        ),  # Rejected: near-unique
+        ColumnProfile("customer_id", "string", distinct_count=25000, filter_frequency_score=0.9),
+        ColumnProfile("order_date", "date", distinct_count=1800, filter_frequency_score=0.95),
+        ColumnProfile("order_uuid", "string", distinct_count=9900000),  # Rejected: near-unique
     ],
     total_rows=10000000,
 )

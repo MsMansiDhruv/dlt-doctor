@@ -53,6 +53,7 @@ nav:
   - The Story: story.md
   - Benchmarks: benchmarks.md
   - CLI & Usage: cli.md
+  - Model Context Protocol (MCP): mcp.md
   - Interactive Notebooks: interactive.md
   - Diagnostic Engines:
       - Catalyst AST Optimizer: engines/catalyst.md

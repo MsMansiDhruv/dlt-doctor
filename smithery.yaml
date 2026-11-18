@@ -1,0 +1,10 @@
+# Smithery configuration file for dlt-doctor
+# Documentation: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+  commandFunction:
+    command: "dlt-doctor"
+    args: ["mcp"]

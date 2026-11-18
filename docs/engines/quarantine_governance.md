@@ -46,18 +46,18 @@ Evaluating expectations independently on two streaming queries causes double ing
 from pyspark import pipelines as dp
 from pyspark.sql import functions as F
 
+
 @dp.temporary_view()
 def silver_orders_evaluated():
     source_df = dp.read_stream("source_bronze")
     return source_df.select(
         "*",
         F.array_compact(
-            F.array(
-                F.when(~F.expr("coalesce((amount > 0), false)"), F.lit("positive_amount"))
-            )
+            F.array(F.when(~F.expr("coalesce((amount > 0), false)"), F.lit("positive_amount")))
         ).alias("_failed_rules"),
         F.current_timestamp().alias("_quarantined_at"),
     )
+
 
 @dp.table(name="silver_orders")
 def silver_orders():
@@ -67,12 +67,10 @@ def silver_orders():
         .drop("_failed_rules", "_quarantined_at")
     )
 
+
 @dp.table(name="silver_orders_quarantine")
 def silver_orders_quarantine():
-    return (
-        dp.read_stream("silver_orders_evaluated")
-        .filter("size(_failed_rules) > 0")
-    )
+    return dp.read_stream("silver_orders_evaluated").filter("size(_failed_rules) > 0")
 ```
 
 ## Quarantine Table Governance

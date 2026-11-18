@@ -23,8 +23,11 @@ Static AST visitors cannot evaluate runtime variables or external metadata looku
 @dlt.expect_all_or_drop({"valid_id": "id IS NOT NULL", "valid_amt": "amount > 0"})
 def orders(): ...
 
+
 # Dynamic dictionary loaded from external JSON or database (Emits DD003)
 rules_dict = load_rules_from_catalog("orders")
+
+
 @dlt.expect_all_or_drop(rules_dict)
 def orders(): ...
 ```

@@ -91,3 +91,9 @@ Generate idempotent Delta MERGE SQL to reprocess quarantined records into target
 ```bash
 dlt-doctor replay --quarantine-table main.silver.orders_quarantine --target-table main.silver.orders --keys order_id
 ```
+
+### 14. Model Context Protocol (`mcp`)
+Launch zero-dependency JSON-RPC 2.0 stdio server for Claude Desktop, Cursor, and agentic IDEs:
+```bash
+dlt-doctor mcp
+```

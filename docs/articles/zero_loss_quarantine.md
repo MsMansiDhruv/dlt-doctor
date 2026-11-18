@@ -33,9 +33,8 @@ Consider a standard financial transaction ingestion pipeline written in DLT:
 import dlt
 from pyspark.sql.functions import col
 
-@dlt.table(
-    comment="Curated silver transactions"
-)
+
+@dlt.table(comment="Curated silver transactions")
 @dlt.expect_or_drop("valid_amount", "amount > 0")
 @dlt.expect_or_drop("valid_account", "account_id IS NOT NULL")
 def silver_transactions():
@@ -52,19 +51,19 @@ To ensure zero data loss while preventing corrupt data from polluting Silver tab
 import dlt
 from pyspark.sql.functions import col, current_timestamp, lit
 
+
 @dlt.table(
-    name="silver_transactions",
-    comment="Validated transactions passing all regulatory checks"
+    name="silver_transactions", comment="Validated transactions passing all regulatory checks"
 )
 def silver_transactions():
-    return (
-        dlt.read_stream("bronze_transactions")
-        .filter((col("amount") > 0) & (col("account_id").isNotNull()))
+    return dlt.read_stream("bronze_transactions").filter(
+        (col("amount") > 0) & (col("account_id").isNotNull())
     )
+
 
 @dlt.table(
     name="silver_transactions_quarantine",
-    comment="Quarantined records failing validation rules with reason metadata"
+    comment="Quarantined records failing validation rules with reason metadata",
 )
 def silver_transactions_quarantine():
     return (
@@ -116,12 +115,14 @@ class ExpectationDoctor:
             if isinstance(node, ast.FunctionDef):
                 for decorator in node.decorator_list:
                     if self._is_expect_or_drop(decorator):
-                        findings.append(AuditFinding(
-                            severity="HIGH",
-                            engine="ExpectationDoctor",
-                            message=f"Function '{node.name}' uses expect_or_drop. Risk of unrecoverable data loss in regulated pipelines.",
-                            suggestion="Refactor into dual-stream routing with an explicit quarantine table."
-                        ))
+                        findings.append(
+                            AuditFinding(
+                                severity="HIGH",
+                                engine="ExpectationDoctor",
+                                message=f"Function '{node.name}' uses expect_or_drop. Risk of unrecoverable data loss in regulated pipelines.",
+                                suggestion="Refactor into dual-stream routing with an explicit quarantine table.",
+                            )
+                        )
         return findings
 ```
 
