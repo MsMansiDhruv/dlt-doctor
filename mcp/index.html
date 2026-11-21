@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1731,7 +1731,7 @@
 <li><strong>Parameters:</strong></li>
 <li><code>table_name</code> <em>(string, required)</em>: Target table name (e.g., <code>prod_lakehouse.silver.orders</code>).</li>
 <li><code>file_sizes_bytes</code> <em>(array of integers, required)</em>: Array of Parquet data file sizes in bytes extracted from Delta log or file storage.</li>
-<li><strong>Returns:</strong> Fragmentation score, small-file count (&lt; 10 MB), average file size, and actionable <code>OPTIMIZE</code> and <code>TBLPROPERTIES</code> statements.</li>
+<li><strong>Returns:</strong> Fragmentation score, small-file count (&lt; 32 MB, configurable via <code>small_file_threshold_mb</code>), average file size, and actionable <code>OPTIMIZE</code> and <code>TBLPROPERTIES</code> statements.</li>
 </ul>
 <hr />
 <h2 id="available-resources">Available Resources</h2>
