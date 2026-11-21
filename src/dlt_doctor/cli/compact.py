@@ -20,6 +20,13 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Optional sample list of file sizes in MB for live compaction debt evaluation",
     )
 
+    p.add_argument(
+        "--threshold-mb",
+        type=int,
+        default=32,
+        help="Small file threshold in MB (default: 32)",
+    )
+
 
 def handle(args: argparse.Namespace) -> int:
     doctor = CompactionDoctor()
@@ -29,14 +36,16 @@ def handle(args: argparse.Namespace) -> int:
         else [10 * 1024 * 1024, 15 * 1024 * 1024]
     )
 
-    report = doctor.analyze_file_distribution(args.table, file_sizes_bytes)
+    report = doctor.analyze_file_distribution(
+        args.table, file_sizes_bytes, small_file_threshold_mb=args.threshold_mb
+    )
 
     print("=" * 70)
     print(" DLT-Doctor Auto-Optimize & Compaction Advisor (Template)")
     print(f" Target Table: {args.table}")
     print("=" * 70)
     print(f"Average File Size:    {report.average_file_size_mb:.2f} MB")
-    print(f"Small Files (< 32MB): {report.small_files_count}")
+    print(f"Small Files (< {args.threshold_mb}MB): {report.small_files_count}")
     print(f"Compaction Debt:      {report.has_compaction_debt}")
     print("\nRecommended Table Properties (Auto-Optimize & Auto-Compaction DDL):")
     print(report.recommended_tblproperties_sql)

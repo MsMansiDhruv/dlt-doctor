@@ -163,7 +163,7 @@ def handle(args: argparse.Namespace) -> int:
             rel_file_path = str(f).replace("\\", "/")
 
         try:
-            content = f.read_text(encoding="utf-8")
+            content = f.read_text(encoding="utf-8-sig")
         except UnicodeDecodeError as exc:
             cannot_heal.append((f, f"Cannot decode file as UTF-8: {exc}"))
             continue

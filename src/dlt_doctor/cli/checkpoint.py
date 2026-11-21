@@ -34,8 +34,18 @@ def handle(args: argparse.Namespace) -> int:
     doctor = CheckpointDoctor()
     report = doctor.audit_checkpoint_state(checkpoint_dir)
 
+    from pathlib import Path
+
+    is_local_dir = Path(checkpoint_dir).is_dir()
+    mode_str = (
+        "Local Directory Inspection"
+        if is_local_dir
+        else "Advisory Checklist (Remote / Offline URI)"
+    )
+
     print("=" * 70)
     print(f" Streaming Checkpoint Integrity Audit: {report.checkpoint_dir}")
+    print(f" Mode:   {mode_str}")
     print(f" Status: {report.status.value}")
     print("=" * 70)
     print(f"Latest Batch ID:            {report.latest_batch_id}")

@@ -155,7 +155,7 @@ def handle(args: argparse.Namespace) -> int:
     doctor = PlanDoctor()
 
     if suffix == ".sql":
-        sql_text = target.read_text(encoding="utf-8")
+        sql_text = target.read_text(encoding="utf-8-sig")
         findings = audit_sql_source(sql_text, config=config)
     elif is_notebook_file(target):
         cells = parse_notebook_cells(target)
@@ -181,7 +181,7 @@ def handle(args: argparse.Namespace) -> int:
                     )
                     findings.append(f)
     else:
-        content = target.read_text(encoding="utf-8")
+        content = target.read_text(encoding="utf-8-sig")
         findings = doctor.analyze_source_code(content, config=config, file_name=target.name)
 
     report = advisor.compile_report(target.name, findings)

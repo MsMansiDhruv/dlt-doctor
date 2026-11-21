@@ -38,6 +38,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def handle(args: argparse.Namespace) -> int:
     cdc = CdcDoctor()
+    source_stream = args.source or f"{args.table.split('.')[-1]}_cdc_stream"
     try:
         tmpl = cdc.generate_cdc_templates(
             target_table=args.table,
@@ -47,7 +48,8 @@ def handle(args: argparse.Namespace) -> int:
             partition_col=args.partition_col,
             source_is_cdf=not args.no_cdf_filter,
             value_cols=args.values,
-            source_stream=args.source,
+            source_stream=source_stream,
+            include_auto_cdc=True,
         )
     except ValueError as exc:
         import sys
@@ -63,7 +65,14 @@ def handle(args: argparse.Namespace) -> int:
     print("\n2. SCD Type 1 MERGE SQL:\n")
     print(tmpl.scd1_merge_sql)
     print("\n3. SCD Type 2 Staging-Union MERGE SQL:\n")
-    print(tmpl.scd2_merge_sql)
+    if tmpl.scd2_merge_sql:
+        print(tmpl.scd2_merge_sql)
+    else:
+        keys_example = " ".join(args.keys)
+        print(
+            f"-- (To generate typed SCD Type 2 MERGE SQL, provide attribute columns via --values)\n"
+            f"-- Example: dlt-doctor cdc --table {args.table} --keys {keys_example} --values col_a col_b"
+        )
     print("\n4. Recommended Databricks Declarative Lakeflow Auto CDC Pattern:\n")
     print(tmpl.auto_cdc_code)
     print("-" * 70)

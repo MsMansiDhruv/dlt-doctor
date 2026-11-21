@@ -13,7 +13,14 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--avg-file-mb", type=float, default=10.0, help="Average file size in MB")
     p.add_argument("--batch", action="store_true", help="Triggered batch workload mode")
     p.add_argument("--hours", type=float, default=24.0, help="Active daily hours")
-    p.add_argument("--joins", type=int, default=1, help="Number of shuffle joins")
+    p.add_argument(
+        "--joins",
+        "--shuffle-joins",
+        dest="joins",
+        type=int,
+        default=1,
+        help="Number of shuffle joins",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:

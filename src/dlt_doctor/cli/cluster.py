@@ -18,7 +18,14 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         required=True,
         help="Candidate columns as name or name:type:distinct_count:filter_freq",
     )
-    p.add_argument("--rows", type=int, default=1_000_000, help="Estimated total table row count")
+    p.add_argument(
+        "--rows",
+        "--total-rows",
+        dest="rows",
+        type=int,
+        default=1_000_000,
+        help="Estimated total table row count (default: 1,000,000)",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:

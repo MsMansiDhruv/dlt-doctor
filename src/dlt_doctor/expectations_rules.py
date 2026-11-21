@@ -417,7 +417,7 @@ class ExpectationAstVisitor(ast.NodeVisitor):
 
 
 def audit_sql_source(sql_text: str, config: DoctorConfig | None = None) -> list[DiagnosticFinding]:
-    """Scan SQL code for expectation and Unity Catalog anti-patterns without Python AST."""
+    """Scan SQL code for expectation, Cartesian join, and Unity Catalog anti-patterns."""
     findings: list[DiagnosticFinding] = []
     cfg = config or DoctorConfig()
 
@@ -438,6 +438,69 @@ def audit_sql_source(sql_text: str, config: DoctorConfig | None = None) -> list[
                     recommendation="Route failing rows to a companion quarantine streaming table.",
                     line_number=idx,
                     code_snippet=line.strip(),
+                )
+            )
+
+        # PLAN-001: Explicit CROSS JOIN
+        if re.search(r"\bCROSS\s+JOIN\b", line, re.IGNORECASE):
+            sev = cfg.get_severity("PLAN-001", DiagnosticSeverity.CRITICAL)
+            findings.append(
+                DiagnosticFinding(
+                    rule_id="PLAN-001",
+                    severity=sev,
+                    title="Catalyst CartesianProduct operator in execution plan (CROSS JOIN)",
+                    impact_summary=(
+                        "SQL query uses explicit CROSS JOIN. Produces M * N record multiplication, "
+                        "risking executor OOM and massive shuffle spill to disk."
+                    ),
+                    recommendation="Ensure a selective equi-join condition is provided (INNER JOIN with ON clause).",
+                    line_number=idx,
+                    code_snippet=line.strip(),
+                    estimated_dbu_impact="Critical",
+                )
+            )
+
+        # PLAN-001: Implicit comma Cartesian product (FROM a, b without ON/WHERE on same line)
+        if (
+            re.search(r"\bFROM\s+[a-zA-Z0-9_\.]+\s*,\s*[a-zA-Z0-9_\.]+\b", line, re.IGNORECASE)
+            and "WHERE" not in line.upper()
+            and "JOIN" not in line.upper()
+        ):
+            sev = cfg.get_severity("PLAN-001", DiagnosticSeverity.CRITICAL)
+            findings.append(
+                DiagnosticFinding(
+                    rule_id="PLAN-001",
+                    severity=sev,
+                    title="Implicit Cartesian join detected in FROM clause",
+                    impact_summary=(
+                        "Comma-separated tables in FROM clause produce an unconstrained CartesianProduct "
+                        "before any subsequent filters are evaluated."
+                    ),
+                    recommendation="Replace comma-separated tables with explicit ANSI JOIN syntax and ON join predicates.",
+                    line_number=idx,
+                    code_snippet=line.strip(),
+                    estimated_dbu_impact="Critical",
+                )
+            )
+
+        # DD004: Non-deterministic functions in expectation / constraint conditions
+        if re.search(r"\b(EXPECT|CONSTRAINT)\b", line, re.IGNORECASE) and re.search(
+            r"\b(current_timestamp|current_date|now|uuid|rand)\s*\(", line, re.IGNORECASE
+        ):
+            sev = cfg.get_severity("DD004", DiagnosticSeverity.HIGH)
+            findings.append(
+                DiagnosticFinding(
+                    rule_id="DD004",
+                    severity=sev,
+                    title="Non-deterministic function in expectation condition",
+                    impact_summary=(
+                        "SQL expectation constraint references non-deterministic function. "
+                        "Records evaluated near boundary intervals may evaluate differently upon replay."
+                    ),
+                    recommendation="Reference static event-time columns or partition boundaries instead of dynamic wall-clock timestamps.",
+                    line_number=idx,
+                    code_snippet=line.strip(),
+                    estimated_dbu_impact="Medium",
                 )
             )
 

@@ -235,6 +235,11 @@ def auto_heal_source(
         raise ValueError(
             f"Invalid quarantine_suffix '{quarantine_suffix}'. Must match ^[A-Za-z0-9_]+$."
         )
+
+    # Strip UTF-8 Byte Order Mark (BOM) if present from Windows/PowerShell tooling
+    if source_code.startswith("\ufeff"):
+        source_code = source_code[1:]
+
     try:
         tree = ast.parse(source_code)
     except SyntaxError as exc:
@@ -703,7 +708,7 @@ def heal_file(
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    source_code = path.read_text(encoding="utf-8")
+    source_code = path.read_text(encoding="utf-8-sig")
     result = auto_heal_source(
         source_code,
         file_path=str(path).replace("\\", "/"),

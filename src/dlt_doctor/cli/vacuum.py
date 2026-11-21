@@ -15,6 +15,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--table", required=True, help="Target Delta table")
     p.add_argument(
         "--retention",
+        "--retention-hours",
+        dest="retention",
         type=int,
         default=168,
         help="Requested retention hours (default: 168)",

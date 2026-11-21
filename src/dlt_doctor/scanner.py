@@ -261,7 +261,7 @@ class DirectoryScanner:
             try:
                 suffix = file_path.suffix.lower()
                 if suffix == ".sql":
-                    sql_text = file_path.read_text(encoding="utf-8")
+                    sql_text = file_path.read_text(encoding="utf-8-sig")
                     findings = audit_sql_source(sql_text, config=self.config)
                 elif suffix == ".ipynb":
                     cells = parse_notebook_cells(file_path)
@@ -314,7 +314,7 @@ class DirectoryScanner:
                                     )
                                     findings.append(f)
                     else:
-                        code = file_path.read_text(encoding="utf-8")
+                        code = file_path.read_text(encoding="utf-8-sig")
                         findings = self.doctor.analyze_source_code(
                             code, config=self.config, file_name=file_path.name
                         )

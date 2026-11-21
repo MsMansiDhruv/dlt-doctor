@@ -26,7 +26,7 @@ def handle(args: argparse.Namespace) -> int:
         print(f"Error: File not found: {target}", file=sys.stderr)
         return 2
 
-    source_code = target.read_text(encoding="utf-8")
+    source_code = target.read_text(encoding="utf-8-sig")
     doctor = UcDoctor()
     plan = doctor.analyze_source_code(
         source_code, target_catalog=args.catalog, target_schema=args.schema

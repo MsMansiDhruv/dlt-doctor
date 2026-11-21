@@ -41,9 +41,35 @@ class CheckpointDoctor:
         latest_commit_batch: int = 100,
     ) -> CheckpointHealthReport:
         """Evaluate checkpoint compatibility against updated pipeline logic."""
+        from pathlib import Path
+
         issues: list[str] = []
         procedure: list[str] = []
         status = CheckpointIntegrityStatus.HEALTHY
+
+        # If pointing to an existing local directory, inspect real metadata folders
+        local_path = Path(checkpoint_dir)
+        is_local_dir = local_path.is_dir()
+        if is_local_dir:
+            offsets_dir = local_path / "offsets"
+            commits_dir = local_path / "commits"
+            state_dir = local_path / "state"
+
+            if state_dir.is_dir():
+                has_stateful_operators = True
+
+            if offsets_dir.is_dir():
+                offset_files = [
+                    int(p.name) for p in offsets_dir.iterdir() if p.is_file() and p.name.isdigit()
+                ]
+                if offset_files:
+                    latest_offset_batch = max(offset_files)
+            if commits_dir.is_dir():
+                commit_files = [
+                    int(p.name) for p in commits_dir.iterdir() if p.is_file() and p.name.isdigit()
+                ]
+                if commit_files:
+                    latest_commit_batch = max(commit_files)
 
         # 1. Uncommitted batch detection (crash recovery)
         uncommitted: list[int] = []
@@ -82,10 +108,20 @@ class CheckpointDoctor:
         if not procedure:
             procedure.append("Checkpoint directory is healthy. Safe to resume streaming execution.")
 
-        guidance = (
-            f"Checkpoint directory '{checkpoint_dir}' status: {status.value}. "
-            f"Latest committed micro-batch: #{latest_commit_batch}."
+        is_cloud_uri = any(
+            checkpoint_dir.startswith(scheme)
+            for scheme in ("dbfs:", "s3:", "s3a:", "abfss:", "wasbs:", "gs:", "/Volumes/")
         )
+        if not is_local_dir and is_cloud_uri:
+            guidance = (
+                f"Checkpoint URI '{checkpoint_dir}' advisory status: {status.value}. "
+                f"(Remote cloud URI: static audit provides reference baseline; live offsets require active workspace credentials)."
+            )
+        else:
+            guidance = (
+                f"Checkpoint directory '{checkpoint_dir}' status: {status.value}. "
+                f"Latest committed micro-batch: #{latest_commit_batch}."
+            )
 
         return CheckpointHealthReport(
             checkpoint_dir=checkpoint_dir,

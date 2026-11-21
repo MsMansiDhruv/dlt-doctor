@@ -72,7 +72,7 @@ Evaluates Delta Lake Parquet file size distributions to detect small-file fragme
 - **Parameters:**
   - `table_name` *(string, required)*: Target table name (e.g., `prod_lakehouse.silver.orders`).
   - `file_sizes_bytes` *(array of integers, required)*: Array of Parquet data file sizes in bytes extracted from Delta log or file storage.
-- **Returns:** Fragmentation score, small-file count (< 10 MB), average file size, and actionable `OPTIMIZE` and `TBLPROPERTIES` statements.
+- **Returns:** Fragmentation score, small-file count (< 32 MB, configurable via `small_file_threshold_mb`), average file size, and actionable `OPTIMIZE` and `TBLPROPERTIES` statements.
 
 ---
 
