@@ -19,7 +19,12 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser(
         "heal", help="Synthesize zero-loss quarantine routing for expect_or_drop"
     )
-    p.add_argument("path", help="Path to Python (.py) or SQL (.sql) pipeline file or directory")
+    p.add_argument(
+        "path",
+        nargs="*",
+        default=["."],
+        help="Path(s) to Python (.py) or SQL (.sql) pipeline file or directory (default: .)",
+    )
     p.add_argument(
         "--write",
         action="store_true",
@@ -128,24 +133,40 @@ def _check_sql_file_compliance(
 
 
 def handle(args: argparse.Namespace) -> int:
-    target = Path(args.path)
-    if not target.exists():
-        print(f"Error: Path not found: {target}", file=sys.stderr)
-        return 2
+    raw_paths = getattr(args, "path", None)
+    if raw_paths is None:
+        raw_paths = ["."]
+    elif isinstance(raw_paths, (str, Path)):
+        raw_paths = [str(raw_paths)]
+    elif not isinstance(raw_paths, list):
+        raw_paths = list(raw_paths)
+
+    if not raw_paths:
+        raw_paths = ["."]
 
     config_target = (
         Path(args.config)
         if getattr(args, "config", None)
-        else (target if target.is_dir() else target.parent)
+        else (Path(raw_paths[0]) if Path(raw_paths[0]).is_dir() else Path(raw_paths[0]).parent)
     )
     config = load_config(config_target)
-    files = _discover_heal_files(target)
+
+    files: list[Path] = []
+    for p in raw_paths:
+        target = Path(p)
+        if not target.exists():
+            print(f"Error: Path not found: {target}", file=sys.stderr)
+            return 2
+        files.extend(_discover_heal_files(target))
+    files = sorted(list(set(files)))
 
     if not files:
-        if target.is_dir():
-            print(f"No pipeline files found in directory {target}")
+        if len(raw_paths) == 1 and Path(raw_paths[0]).is_dir():
+            print(f"No pipeline files found in directory {raw_paths[0]}")
+        elif len(raw_paths) == 1:
+            print(f"File {Path(raw_paths[0]).name} is not a supported pipeline format (.py or .sql)")
         else:
-            print(f"File {target.name} is not a supported pipeline format (.py or .sql)")
+            print(f"No supported pipeline files found in {len(raw_paths)} specified paths")
         return 0
 
     config_root = config_target if config_target.is_dir() else config_target.parent

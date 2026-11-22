@@ -151,6 +151,8 @@ def derive_sarif(data: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    from dlt_doctor import __version__
+
     return {
         "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
         "version": "2.1.0",
@@ -159,7 +161,8 @@ def derive_sarif(data: dict[str, Any]) -> dict[str, Any]:
                 "tool": {
                     "driver": {
                         "name": "dlt-doctor",
-                        "version": "0.5.0",
+                        "version": __version__,
+                        "informationUri": "https://github.com/MsMansiDhruv/dlt-doctor",
                         "rules": list(rules_map.values()),
                     }
                 },

@@ -126,6 +126,8 @@ class DirectoryAuditReport:
 
     def to_sarif(self) -> str:
         """Serialize findings into standard GitHub Code Scanning SARIF format."""
+        from dlt_doctor import __version__
+
         results: list[dict] = []
         rules_map: dict[str, dict] = {}
 
@@ -143,6 +145,7 @@ class DirectoryAuditReport:
                     "name": f.title,
                     "shortDescription": {"text": f.title},
                     "fullDescription": {"text": f.impact_summary},
+                    "help": {"text": f.recommendation},
                 }
 
             start_line = f.line_number or 1
@@ -157,7 +160,7 @@ class DirectoryAuditReport:
                     "locations": [
                         {
                             "physicalLocation": {
-                                "artifactLocation": {"uri": file_name},
+                                "artifactLocation": {"uri": str(file_name).replace("\\", "/")},
                                 "region": {
                                     "startLine": int(start_line)
                                     if isinstance(start_line, (int, float))
@@ -177,7 +180,8 @@ class DirectoryAuditReport:
                     "tool": {
                         "driver": {
                             "name": "dlt-doctor",
-                            "version": "0.5.0",
+                            "version": __version__,
+                            "informationUri": "https://github.com/MsMansiDhruv/dlt-doctor",
                             "rules": list(rules_map.values()),
                         }
                     },

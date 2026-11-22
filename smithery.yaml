@@ -5,6 +5,11 @@ startCommand:
   type: stdio
   configSchema:
     type: object
-  commandFunction:
-    command: "dlt-doctor"
-    args: ["mcp"]
+    properties: {}
+  commandFunction: |-
+    (config) => ({
+      command: 'uvx',
+      args: ['dlt-doctor', 'mcp'],
+      env: {}
+    })
+

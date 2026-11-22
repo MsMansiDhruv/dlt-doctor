@@ -4,4 +4,14 @@
   entry: dlt-doctor analyze
   language: python
   types_or: [python, sql, jupyter]
+  require_serial: true
+  additional_dependencies: ["sqlglot>=20.0.0", "rich>=13.0.0"]
+
+- id: dlt-doctor-heal
+  name: dlt-doctor auto-heal
+  description: "Auto-heals silent-drop expect_or_drop calls by synthesizing dual-table quarantine routing"
+  entry: dlt-doctor heal --check
+  language: python
+  types_or: [python, sql]
+  require_serial: true
   additional_dependencies: ["sqlglot>=20.0.0", "rich>=13.0.0"]
