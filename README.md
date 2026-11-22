@@ -30,7 +30,7 @@
 </div>
 
 > [!NOTE]
-> **Beta Release (v0.6.0)**: `dlt-doctor` is in active beta. Interfaces and CLI contracts may evolve prior to v1.0.0. Feedback and contributions are welcome via [GitHub Issues](https://github.com/MsMansiDhruv/dlt-doctor/issues) and [Discussions](https://github.com/MsMansiDhruv/dlt-doctor/discussions).
+> **Beta Release (v0.6.1)**: `dlt-doctor` is in active beta. Interfaces and CLI contracts may evolve prior to v1.0.0. Feedback and contributions are welcome via [GitHub Issues](https://github.com/MsMansiDhruv/dlt-doctor/issues) and [Discussions](https://github.com/MsMansiDhruv/dlt-doctor/discussions).
 
 ---
 
@@ -157,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run dlt-doctor Quality Audit
-        uses: MsMansiDhruv/dlt-doctor@v0.6.0
+        uses: MsMansiDhruv/dlt-doctor@v0.6.1
         with:
           path: "src/pipelines"
           format: "text"
