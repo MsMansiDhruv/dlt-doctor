@@ -1,0 +1,9 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "MsMansiDhruv"
+  ],
+  "name": "dlt-doctor",
+  "version": "0.6.1",
+  "description": "Offline static AST analysis engine and stdio Model Context Protocol (MCP) server for Databricks Delta Live Tables, PySpark, and Lakeflow declarative pipelines."
+}
