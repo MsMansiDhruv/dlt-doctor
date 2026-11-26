@@ -12,7 +12,7 @@ from dlt_doctor.config import load_config
 from dlt_doctor.expectations_rules import audit_sql_source
 from dlt_doctor.heal import heal_file
 from dlt_doctor.notebook import is_notebook_file, parse_notebook_cells
-from dlt_doctor.scanner import DirectoryAuditReport, DirectoryScanner
+from dlt_doctor.scanner import DirectoryAuditReport, DirectoryScanner, PipelineAuditReport
 
 
 def register_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -104,7 +104,8 @@ def handle(args: argparse.Namespace) -> int:
         if args.fix:
             if target.is_dir():
                 print(
-                    "Error: --fix / --auto-heal must be targeted at a specific file.", file=sys.stderr
+                    "Error: --fix / --auto-heal must be targeted at a specific file.",
+                    file=sys.stderr,
                 )
                 return 2
             write_mode = getattr(args, "write", False) and not getattr(args, "dry_run", False)

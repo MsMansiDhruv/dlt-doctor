@@ -164,7 +164,9 @@ def handle(args: argparse.Namespace) -> int:
         if len(raw_paths) == 1 and Path(raw_paths[0]).is_dir():
             print(f"No pipeline files found in directory {raw_paths[0]}")
         elif len(raw_paths) == 1:
-            print(f"File {Path(raw_paths[0]).name} is not a supported pipeline format (.py or .sql)")
+            print(
+                f"File {Path(raw_paths[0]).name} is not a supported pipeline format (.py or .sql)"
+            )
         else:
             print(f"No supported pipeline files found in {len(raw_paths)} specified paths")
         return 0

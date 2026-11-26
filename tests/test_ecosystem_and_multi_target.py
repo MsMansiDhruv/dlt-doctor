@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 import pytest
 import yaml
 
@@ -59,7 +60,9 @@ def test_analyze_multi_file_targets(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert "flagged" in out.lower()
 
 
-def test_analyze_multi_file_sarif_export(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_analyze_multi_file_sarif_export(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     f1 = tmp_path / "pipe1.sql"
     f1.write_text("CREATE STREAMING TABLE bad1 AS SELECT * FROM tbl1, tbl2;\n", encoding="utf-8")
 
