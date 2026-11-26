@@ -26,30 +26,105 @@ _TOOLS_SPEC: list[dict[str, Any]] = [
         "name": "analyze_pyspark_source",
         "description": (
             "Statically analyze PySpark or Delta Live Tables (DLT) Python source code "
-            "for Catalyst plan bloat, anti-patterns, skew risks, and missing quarantine gates."
+            "for Catalyst plan bloat, anti-patterns, skew risks, watermark reordering, and missing quarantine gates.\n\n"
+            "Usage Guidelines:\n"
+            "- Use for individual Python (.py) source strings or pipeline scripts.\n"
+            "- For SQL queries or DLT SQL statements, use analyze_sql_source instead.\n"
+            "- For scanning entire directories or multiple repository files, use scan_pipeline_directory instead.\n\n"
+            "Behavior:\n"
+            "- Runs 100% offline via local Python AST inspection. Does NOT connect to Databricks clusters, execute code, or require JVM/cloud credentials.\n"
+            "- Deterministic and idempotent. Returns a structured JSON report containing finding counts and diagnostic items.\n"
+            "- Syntax errors or invalid Python constructs are surfaced as diagnostic findings rather than raising unhandled exceptions."
         ),
+        "annotations": {
+            "readOnlyHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
                 "source_code": {
                     "type": "string",
-                    "description": "Python source code of the PySpark or DLT pipeline.",
+                    "description": "Python source code of the PySpark or DLT pipeline to audit.",
                 },
                 "file_name": {
                     "type": "string",
-                    "description": "Optional filename context (default: pipeline.py).",
+                    "description": "Optional contextual filename for reporting (default: pipeline.py).",
                     "default": "pipeline.py",
                 },
             },
             "required": ["source_code"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "file_name": {
+                    "type": "string",
+                    "description": "Contextual filename that was audited.",
+                },
+                "finding_count": {
+                    "type": "integer",
+                    "description": "Total number of diagnostic findings discovered.",
+                },
+                "findings": {
+                    "type": "array",
+                    "description": "List of diagnostic issues detected in the PySpark source.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "rule_id": {
+                                "type": "string",
+                                "description": "Diagnostic rule ID (e.g., DD001, DD002, PERF001).",
+                            },
+                            "rule_name": {
+                                "type": "string",
+                                "description": "Human-readable diagnostic rule name.",
+                            },
+                            "severity": {
+                                "type": "string",
+                                "enum": ["HIGH", "MEDIUM", "LOW", "INFO"],
+                                "description": "Diagnostic severity level.",
+                            },
+                            "line_number": {
+                                "type": "integer",
+                                "description": "1-based line number in source code.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "Detailed explanation of the issue and production risk.",
+                            },
+                            "remediation": {
+                                "type": "string",
+                                "description": "Prescriptive remediation guidance or code fix.",
+                            },
+                        },
+                        "required": ["rule_id", "severity", "message"],
+                    },
+                },
+            },
+            "required": ["file_name", "finding_count", "findings"],
+        },
     },
     {
         "name": "analyze_sql_source",
         "description": (
-            "Audit Databricks SQL or Delta Live Tables SQL source code for quality "
-            "expectation risks, schema issues, and optimization opportunities."
+            "Audit Databricks SQL or Delta Live Tables (DLT) SQL source code for quality "
+            "expectation risks, Cartesian joins, schema drift traps, and optimization opportunities.\n\n"
+            "Usage Guidelines:\n"
+            "- Use for individual SQL (.sql) query text or DLT SQL statements (e.g., CREATE STREAMING TABLE, expect_or_drop).\n"
+            "- For PySpark Python pipelines, use analyze_pyspark_source instead.\n"
+            "- For scanning an entire repository or folder of mixed SQL and Python files, use scan_pipeline_directory instead.\n\n"
+            "Behavior:\n"
+            "- Pure offline static AST parsing via sqlglot. Does NOT execute queries, access databases, or connect to Databricks SQL warehouses.\n"
+            "- Deterministic and idempotent. Returns a structured diagnostic report with violation counts and remediation advice.\n"
+            "- Syntax errors are surfaced as structured diagnostic findings."
         ),
+        "annotations": {
+            "readOnlyHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -60,13 +135,72 @@ _TOOLS_SPEC: list[dict[str, Any]] = [
             },
             "required": ["sql_code"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "finding_count": {
+                    "type": "integer",
+                    "description": "Total number of SQL diagnostic findings discovered.",
+                },
+                "findings": {
+                    "type": "array",
+                    "description": "List of SQL quality and performance findings.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "rule_id": {
+                                "type": "string",
+                                "description": "Rule identifier (e.g., PLAN-001, DD001).",
+                            },
+                            "rule_name": {
+                                "type": "string",
+                                "description": "Diagnostic rule name.",
+                            },
+                            "severity": {
+                                "type": "string",
+                                "enum": ["HIGH", "MEDIUM", "LOW", "INFO"],
+                                "description": "Diagnostic severity level.",
+                            },
+                            "line_number": {
+                                "type": "integer",
+                                "description": "Line number where the SQL construct was detected.",
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "Description of the anti-pattern or risk.",
+                            },
+                            "remediation": {
+                                "type": "string",
+                                "description": "Actionable SQL fix recommendation.",
+                            },
+                        },
+                        "required": ["rule_id", "severity", "message"],
+                    },
+                },
+            },
+            "required": ["finding_count", "findings"],
+        },
     },
     {
         "name": "scan_pipeline_directory",
         "description": (
-            "Recursively scan a local directory of PySpark, SQL, and notebook files "
-            "and return a structured JSON audit report."
+            "Recursively scan a local repository or directory of PySpark (.py), SQL (.sql), "
+            "and Databricks notebook (.ipynb) files to produce an aggregated lakehouse quality audit report.\n\n"
+            "Usage Guidelines:\n"
+            "- Use to audit an entire repository, dbt/DLT project, or folder containing multiple pipeline files.\n"
+            "- For auditing a single Python pipeline script, prefer analyze_pyspark_source.\n"
+            "- For auditing an isolated SQL query, prefer analyze_sql_source.\n\n"
+            "Behavior:\n"
+            "- Recursively inspects the filesystem at directory_path.\n"
+            "- Completely offline; runs without cloud credentials, JVM, or active cluster connections.\n"
+            "- Evaluates all supported files, computes individual and aggregate health scores (0-100), and reports per-file findings.\n"
+            "- Individual file errors are captured inside per-file reports without halting the directory scan."
         ),
+        "annotations": {
+            "readOnlyHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -82,13 +216,73 @@ _TOOLS_SPEC: list[dict[str, Any]] = [
             },
             "required": ["directory_path"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "target_directory": {
+                    "type": "string",
+                    "description": "Directory path that was audited.",
+                },
+                "total_files_scanned": {
+                    "type": "integer",
+                    "description": "Total pipeline files analyzed.",
+                },
+                "clean_files": {
+                    "type": "integer",
+                    "description": "Number of files with zero findings.",
+                },
+                "flagged_files": {
+                    "type": "integer",
+                    "description": "Number of files with at least one finding.",
+                },
+                "overall_score": {
+                    "type": "number",
+                    "description": "Composite health score from 0 (worst) to 100 (clean).",
+                },
+                "reports": {
+                    "type": "array",
+                    "description": "Per-file audit reports.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "Relative or absolute path to the file.",
+                            },
+                            "finding_count": {
+                                "type": "integer",
+                                "description": "Number of findings in this file.",
+                            },
+                            "findings": {
+                                "type": "array",
+                                "description": "List of diagnostic findings for this file.",
+                            },
+                        },
+                        "required": ["file_path", "finding_count"],
+                    },
+                },
+            },
+            "required": ["total_files_scanned", "clean_files", "flagged_files", "overall_score"],
+        },
     },
     {
         "name": "forecast_dbu_cost",
         "description": (
-            "Forecast Classic vs Serverless Databricks DBU consumption and recommend "
-            "worker sizing from ingestion throughput and shuffle complexity."
+            "Forecast Databricks DBU consumption and compute costs (Classic compute vs. Serverless) "
+            "and recommend optimal worker sizing based on ingestion throughput and shuffle complexity.\n\n"
+            "Usage Guidelines:\n"
+            "- Use during architectural sizing, capacity planning, and cost optimization before deploying Lakeflow or DLT pipelines.\n"
+            "- For Delta Lake table storage layout and file size optimization, use audit_compaction_debt instead.\n\n"
+            "Behavior:\n"
+            "- Pure deterministic mathematical calculation based on Databricks official DBU pricing and node SKU specifications.\n"
+            "- Does NOT query Databricks billing APIs, account consoles, or live workspace compute.\n"
+            "- Returns hourly, daily, and monthly DBU and USD cost projections across Classic and Serverless options with cluster node recommendations."
         ),
+        "annotations": {
+            "readOnlyHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -119,19 +313,70 @@ _TOOLS_SPEC: list[dict[str, Any]] = [
             },
             "required": ["files_per_hour"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "estimated_daily_gb": {
+                    "type": "number",
+                    "description": "Estimated daily volume ingested in gigabytes.",
+                },
+                "recommended_worker_count": {
+                    "type": "integer",
+                    "description": "Recommended number of worker nodes.",
+                },
+                "recommended_worker_type": {
+                    "type": "string",
+                    "description": "Recommended cloud worker SKU (e.g., i3.xlarge).",
+                },
+                "classic_daily_dbu": {
+                    "type": "number",
+                    "description": "Projected daily DBU burn on Classic compute.",
+                },
+                "classic_monthly_cost_usd": {
+                    "type": "number",
+                    "description": "Projected monthly USD cost on Classic compute.",
+                },
+                "serverless_daily_dbu": {
+                    "type": "number",
+                    "description": "Projected daily DBU burn on Serverless compute.",
+                },
+                "serverless_monthly_cost_usd": {
+                    "type": "number",
+                    "description": "Projected monthly USD cost on Serverless compute.",
+                },
+            },
+            "required": [
+                "recommended_worker_count",
+                "classic_daily_dbu",
+                "classic_monthly_cost_usd",
+            ],
+        },
     },
     {
         "name": "audit_compaction_debt",
         "description": (
-            "Evaluate Delta Lake table file-size distribution for small-file "
-            "fragmentation and generate targeted OPTIMIZE / TBLPROPERTIES SQL."
+            "Evaluate Delta Lake table file-size distribution for small-file fragmentation debt "
+            "and synthesize targeted OPTIMIZE, ZORDER BY, Liquid Clustering, and TBLPROPERTIES SQL commands.\n\n"
+            "Usage Guidelines:\n"
+            "- Use when troubleshooting slow Delta Lake queries, read amplification, or excessive metadata overhead.\n"
+            "- Prerequisites: Obtain file sizes in bytes (e.g. from DESCRIBE DETAIL table_name, Delta transaction logs, or cloud storage inventory).\n"
+            "- To forecast pipeline compute cluster DBU burn instead, use forecast_dbu_cost.\n\n"
+            "Behavior:\n"
+            "- Purely analytical calculation; parses file size array and computes fragmentation statistics.\n"
+            "- Does NOT connect to cloud object storage or execute the generated OPTIMIZE/ALTER TABLE statements against a live warehouse.\n"
+            "- Returns small-file ratios, compaction urgency rating, and copy-pasteable SQL remediation scripts."
         ),
+        "annotations": {
+            "readOnlyHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "inputSchema": {
             "type": "object",
             "properties": {
                 "table_name": {
                     "type": "string",
-                    "description": "Three-part Unity Catalog or Delta table name.",
+                    "description": "Three-part Unity Catalog or Delta table name (catalog.schema.table).",
                 },
                 "file_sizes_bytes": {
                     "type": "array",
@@ -145,6 +390,47 @@ _TOOLS_SPEC: list[dict[str, Any]] = [
                 },
             },
             "required": ["table_name", "file_sizes_bytes"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "table_name": {
+                    "type": "string",
+                    "description": "Analyzed Delta table identifier.",
+                },
+                "total_files": {
+                    "type": "integer",
+                    "description": "Total number of Parquet files evaluated.",
+                },
+                "total_size_mb": {
+                    "type": "number",
+                    "description": "Total table size in megabytes.",
+                },
+                "small_file_count": {
+                    "type": "integer",
+                    "description": "Number of files smaller than the threshold.",
+                },
+                "small_file_ratio": {
+                    "type": "number",
+                    "description": "Fraction of files that are small (0.0 to 1.0).",
+                },
+                "compaction_urgency": {
+                    "type": "string",
+                    "enum": ["CRITICAL", "HIGH", "MODERATE", "LOW", "OPTIMAL"],
+                    "description": "Urgency rating for running OPTIMIZE.",
+                },
+                "recommended_sql": {
+                    "type": "string",
+                    "description": "Targeted SQL remediation command to compact small files.",
+                },
+            },
+            "required": [
+                "table_name",
+                "total_files",
+                "small_file_ratio",
+                "compaction_urgency",
+                "recommended_sql",
+            ],
         },
     },
 ]
