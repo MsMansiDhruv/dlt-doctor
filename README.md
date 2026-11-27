@@ -14,6 +14,7 @@
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://msmansidhruv.github.io/dlt-doctor/mcp/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/blob/main/LICENSE)
 [![CI](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml)
+[![MsMansiDhruv/dlt-doctor MCP server](https://glama.ai/mcp/servers/MsMansiDhruv/dlt-doctor/badges/score.svg)](https://glama.ai/mcp/servers/MsMansiDhruv/dlt-doctor)
 
 <p align="center">
   <a href="https://msmansidhruv.github.io/dlt-doctor/">Documentation</a> •
