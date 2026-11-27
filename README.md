@@ -15,6 +15,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](https://github.com/MsMansiDhruv/dlt-doctor/blob/main/LICENSE)
 [![CI](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/MsMansiDhruv/dlt-doctor/actions/workflows/ci.yml)
 [![MsMansiDhruv/dlt-doctor MCP server](https://glama.ai/mcp/servers/MsMansiDhruv/dlt-doctor/badges/score.svg)](https://glama.ai/mcp/servers/MsMansiDhruv/dlt-doctor)
+[![MCP Servers](https://img.shields.io/badge/mcpservers.org-dlt--doctor-0E1726?style=flat-square)](https://mcpservers.org/servers/msmansidhruv/dlt-doctor)
 
 <p align="center">
   <a href="https://msmansidhruv.github.io/dlt-doctor/">Documentation</a> •
